@@ -38,6 +38,9 @@ OWNED = [
     'dm/ohos/mkhap.py',
 ]
 
+# Lines no unit test can reach are marked in the source with `# pragma: no cover` and the reason, which is
+# coverage's own mechanism: an exclusion stays visible at the line it applies to instead of living in a list here.
+
 
 def main():
     ap = argparse.ArgumentParser()
