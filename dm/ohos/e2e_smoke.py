@@ -26,12 +26,14 @@ TAIL_LINES = 40                                             # the verdict's log_
 os.environ.setdefault('PYTHONUTF8', '1')   # the children (devpush -> build_ohos) open game paths this console's page cannot name
 
 # The boot contract (ROADMAP P0.3): a good boot logs "game thread started" (napi_bridge.c), then "nnosInitialize"
-# (host/main.c's ">>> nnosInitialize"), then eventually a "frames presented" line. Bad markers stop the round:
+# (host/main.c's ">>> nnosInitialize"), then eventually a frame-activity line: "[longframe]" is what a real game
+# logs per analyzed long frame (hle_nvn.c's frame accounting), while "frames presented" is the no-data self-test
+# scene's counter (dm/ohos/demo_ohos.c); either satisfies the contract. Bad markers stop the round:
 # "FATAL" (host/dm.h die()) and "[dm] CRASH sig=" (host/crash.c's reporter, routed to this tag on OHOS) mean the
 # process is going down. "[RED]" is NOT a failure: it is the repo's diagnostic prefix and on this backend most of
 # its lines are informational performance fallbacks (a memory pool that could not be zero-copy falls back to a GPU
 # copy, "slow" is the word the source uses); such lines are collected as warnings in the verdict instead.
-MARKERS_BOOT = ('game thread started', 'nnosInitialize', 'frames presented')
+MARKERS_BOOT = ('game thread started', 'nnosInitialize', '[longframe]', 'frames presented')
 MARKERS_CRASH = ('FATAL', '[dm] CRASH sig=')
 MARKERS_WARN = ('[RED]',)   # recorded in the verdict's warn_lines; never fails the round on its own
 
@@ -146,9 +148,9 @@ class BootWatch:
     def saw(self, m): return m in self.markers
 
     def verdict(self):
-        if self.crash_line is not None: return 'fail'   # a crash marker dominates even a later "frames presented"
-        if self.saw('game thread started') and self.saw('frames presented'): return 'pass'
-        return 'fail'                                   # the window ended without frames (a timeout fail)
+        if self.crash_line is not None: return 'fail'   # a crash marker dominates even later frame activity
+        if self.saw('game thread started') and (self.saw('[longframe]') or self.saw('frames presented')): return 'pass'
+        return 'fail'                                   # the window ended without frame activity (a timeout fail)
 
     @property
     def log_tail(self): return [ln.rstrip() for ln in self.lines[-TAIL_LINES:]]
@@ -273,8 +275,8 @@ def run_smoke(a):
     path = write_verdict(a.out, v)
     print('[e2e] markers: %s' % (', '.join(watch.markers) or 'none'))
     if watch.crash_line: print('[e2e] crash line: %s' % watch.crash_line[:160])
-    why = ('the boot reached frames presented' if result == 'pass'
-           else ('a crash marker stopped the round' if watch.crash_line else 'no frames presented in the window'))
+    why = ('the boot reached frame activity' if result == 'pass'
+           else ('a crash marker stopped the round' if watch.crash_line else 'no frame activity in the window'))
     print('VERDICT: %s - %s (%.0f s; exit %d)' % ('PASS' if result == 'pass' else 'FAIL', why, elapsed, exit_code(result)))
     print('  verdict: %s' % path)
     return exit_code(result)
