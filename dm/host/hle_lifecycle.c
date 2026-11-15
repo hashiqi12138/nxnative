@@ -49,11 +49,12 @@ void dm_host_shutdown_then(const char *why, void (*then)(void *), void *arg) {
 static void (*g_exit_then)(void *); static void *g_exit_arg;
 static void *exit_deadline(void *a) {   // the EXIT_LATE_MS deadline: ends the process if the exit is stuck, starting the next program if it has not
     (void)a;
-    uint64_t t0 = now_ns(); int left = DM_QUIT_ARCH_MS + EXIT_LATE_MS;
+    int left = DM_QUIT_ARCH_MS + EXIT_LATE_MS;
     struct timespec t = {left / 1000, (long)(left % 1000) * 1000000};
     while (nanosleep(&t, &t)) ;
     LOG("[RED] graceful exit not done in %.1f seconds, exiting at once", (DM_QUIT_ARCH_MS + EXIT_LATE_MS) / 1e3);
-    exit_end(g_exit_then, g_exit_arg);
+    exit_end(g_exit_then, g_exit_arg);   // does not return (_exit)
+    return NULL;
 }
 static _Atomic int g_drained;
 static void *drain_thread(void *a) {   // dm_gfx_suspend beside the rest, as the Apple side's dispatch_async block
