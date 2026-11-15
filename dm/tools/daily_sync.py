@@ -128,8 +128,10 @@ def main():
         # git diff --name-status --diff-filter=U shows a single 'U' and cannot tell keep-deletion from content.
         rc2, st = git('status', '--porcelain')
         conf = [l for l in st.splitlines() if len(l) >= 4 and l[:2] in ('DU', 'DD', 'UD', 'UU', 'AA', 'AU', 'UA')]
-        keep_del = [l[3:].strip() for l in conf if l[:2] in ('DU', 'DD')]   # upstream changed what the port does not carry: keep the deletion
-        human = [l[3:].strip() for l in conf if l[:2] not in ('DU', 'DD')]
+        # keep-deletion: anything the port deleted (DU/DD) and any UU inside docs/ - the port snapshot carries no
+        # docs/, so even an upstream-added docs file (UU after our deletion) keeps the deletion. UU elsewhere is real.
+        keep_del = [l[3:].strip() for l in conf if l[:2] in ('DU', 'DD') or (l[:2] == 'UU' and l[3:].strip().startswith('docs/'))]
+        human = [l[3:].strip() for l in conf if l[3:].strip() not in keep_del]
         if human:
             log('ABORT: content conflict(s) need a human: %s' % '; '.join(human[:8]))
             cleanup(); return 1
