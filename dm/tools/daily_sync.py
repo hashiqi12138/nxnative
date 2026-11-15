@@ -82,7 +82,8 @@ def main():
     a = ap.parse_args()
     if a.self_test: return self_test()
 
-    git = lambda *c, **kw: sh(['git', *c], cwd=kw.get('cwd', NESTED), timeout=kw.get('timeout', 3600))
+    git = lambda *c, **kw: sh(['git', '-c', 'user.name=seedds', '-c', 'user.email=seedds@gmail.com', *c],
+                             cwd=kw.get('cwd', NESTED), timeout=kw.get('timeout', 3600))
 
     # ---- preflight: nested clean; outer clean outside the nested projection (projection drift is the bot's own
     # mirror lag - the mirror step at the end commits it; anything else outside it is a person's work in progress) ----
@@ -122,18 +123,19 @@ def main():
 
     rc, out = sh([sys.executable, SYNC], cwd=NESTED)
     if rc:
-        # sync_upstream leaves a half-done merge: the true unmerged set is --diff-filter=U (sync_upstream's own
-        # listing), not git status's staged adds/changes of the merge in progress
-        rc2, un = git('diff', '--name-status', '--diff-filter=U')
-        unmerged = [l.split('\t', 1)[1].strip() for l in un.splitlines() if l.strip()]
-        keep_del = [p for p in unmerged if any(l.startswith(('DU', 'UD', 'DD')) for l in un.splitlines() if p in l)]
-        human = [p for p in unmerged if p not in keep_del]
+        # sync_upstream leaves the merge half-done. Classify by git status --porcelain's CONFLICT codes only
+        # (DU/DD/UD/UU/AA/AU/UA): staged adds and changes of the merge in progress (A /M ) are not conflicts.
+        # git diff --name-status --diff-filter=U shows a single 'U' and cannot tell keep-deletion from content.
+        rc2, st = git('status', '--porcelain')
+        conf = [l for l in st.splitlines() if len(l) >= 4 and l[:2] in ('DU', 'DD', 'UD', 'UU', 'AA', 'AU', 'UA')]
+        keep_del = [l[3:].strip() for l in conf if l[:2] in ('DU', 'DD')]   # upstream changed what the port does not carry: keep the deletion
+        human = [l[3:].strip() for l in conf if l[:2] not in ('DU', 'DD')]
         if human:
             log('ABORT: content conflict(s) need a human: %s' % '; '.join(human[:8]))
             cleanup(); return 1
-        if not unmerged:
+        if not conf:
             log('ABORT: sync_upstream failed with no conflicts: %s' % out.strip()[-300:]); cleanup(); return 1
-        for p in keep_del: git('rm', '-q', '--', p)   # delete/modify: keep the deletion (the port has no docs/)
+        for p in keep_del: git('rm', '-q', '--', p)
         rc3, st2 = git('diff', '--name-only', '--diff-filter=U')
         if rc3 or st2.strip(): log('ABORT: unmerged files remain after the keep-deletion pass'); cleanup(); return 1
         rc3, out3 = git('commit', '-m', 'Merge upstream main (%s) into the OHOS port' % up_sha[:8])
