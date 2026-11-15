@@ -11,7 +11,7 @@
 # The log is dm/ohos/out/daily_sync.log (verdicts, abort reasons, the conflict list).
 #   python tools/daily_sync.py [--dry-run] [--no-push] [--self-test] [--game <id>]
 # Windows scheduled task "NxohosDailySync" runs it daily (06:30), see tools/daily_sync.ps1 outside the repo.
-import argparse, datetime, os, re, subprocess, sys
+import argparse, datetime, os, re, subprocess, sys, time
 
 os.environ.setdefault('PYTHONUTF8', '1')
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -84,16 +84,19 @@ def main():
 
     git = lambda *c, **kw: sh(['git', *c], cwd=kw.get('cwd', NESTED), timeout=kw.get('timeout', 3600))
 
-    # ---- preflight: both trees clean (tracked changes only; untracked session debris is not "work in progress"), upstream reachable ----
+    # ---- preflight: nested clean; outer clean outside the nested projection (projection drift is the bot's own
+    # mirror lag - the mirror step at the end commits it; anything else outside it is a person's work in progress) ----
     rc, out = git('status', '--porcelain', '--untracked-files=no')
     if rc or out.strip(): log('ABORT: nested tree dirty (work in progress): %s' % out.strip()[:200]); return 1
     rc, out = git('status', '--porcelain', '--untracked-files=no', cwd=OUTER)
-    if rc or out.strip(): log('ABORT: outer tree dirty (work in progress): %s' % out.strip()[:200]); return 1
+    outside = [l for l in out.splitlines() if l.strip() and not l[3:].strip().startswith('nx2ohos/nxnative/')]
+    if rc or outside:
+        log('ABORT: outer tree changed outside the nested projection (work in progress): %s' % ('; '.join(l.strip() for l in outside[:6]) or out.strip()[:200]))
+        return 1
     rc, out = git('fetch', 'upstream', timeout=600)
-    for attempt in range(3):
+    for _ in range(3):
         if rc == 0: break
-        time.sleep(20) if False else None
-        import time as _t; _t.sleep(20)
+        time.sleep(20)
         rc, out = git('fetch', 'upstream', timeout=600)
     if rc: log('ABORT: upstream fetch failed 3x (network): %s' % out.strip()[:200]); return 1
 
@@ -182,11 +185,10 @@ def main():
     if a.no_push:
         log('no-push: outer commit kept local at %s' % sh(['git', 'rev-parse', '--short', 'HEAD'], cwd=OUTER)[1].strip())
         return 0
-    import time as _t
-    for attempt in range(3):
+    for _ in range(3):
         rc, out = git('push', 'origin', 'main', cwd=OUTER, timeout=600)
         if rc == 0: break
-        _t.sleep(30)
+        time.sleep(30)
     if rc: log('ABORT: push failed 3x (network): the commit is local, push by hand when github answers: %s' % out.strip()[:200]); return 1
     log('PUSHED: outer main %s, upstream %s, %d commit(s) synced' % (
         sh(['git', 'rev-parse', '--short', 'HEAD'], cwd=OUTER)[1].strip(), up_sha[:8], n_new))
