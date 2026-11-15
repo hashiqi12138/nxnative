@@ -119,13 +119,17 @@ def main():
 
     rc, out = sh([sys.executable, SYNC], cwd=NESTED)
     if rc:
-        rc2, st = git('status', '--porcelain')
-        keep_del, human = classify(st.splitlines())
+        # sync_upstream leaves a half-done merge: the true unmerged set is --diff-filter=U (sync_upstream's own
+        # listing), not git status's staged adds/changes of the merge in progress
+        rc2, un = git('diff', '--name-status', '--diff-filter=U')
+        unmerged = [l.split('\t', 1)[1].strip() for l in un.splitlines() if l.strip()]
+        keep_del = [p for p in unmerged if any(l.startswith(('DU', 'UD', 'DD')) for l in un.splitlines() if p in l)]
+        human = [p for p in unmerged if p not in keep_del]
         if human:
-            log('ABORT: content conflict(s) need a human: %s' % '; '.join('%s %s' % h for h in human[:8]))
+            log('ABORT: content conflict(s) need a human: %s' % '; '.join(human[:8]))
             cleanup(); return 1
-        if not keep_del:
-            log('ABORT: sync_upstream failed with no conflicts: %s' % out.strip()[:300]); cleanup(); return 1
+        if not unmerged:
+            log('ABORT: sync_upstream failed with no conflicts: %s' % out.strip()[-300:]); cleanup(); return 1
         for p in keep_del: git('rm', '-q', '--', p)   # delete/modify: keep the deletion (the port has no docs/)
         rc3, st2 = git('diff', '--name-only', '--diff-filter=U')
         if rc3 or st2.strip(): log('ABORT: unmerged files remain after the keep-deletion pass'); cleanup(); return 1
