@@ -42,6 +42,39 @@ else:
     up = os.path.join(up_root, "dm")
 u, o = walk(up), walk(OURS)
 fails = []
+
+
+def find_patch():
+    """The GNU patch this guard needs, not whatever PATH calls 'patch'.
+
+    On GitHub's windows-latest runner, PATH reaches Strawberry Perl's C:\\Strawberry\\c\\bin\\patch.exe before any
+    GNU one, and that is a Perl script: it reads -p1 -f -s as its own arguments and dies with "File: .\\src\\patch",
+    which the guard then reported as "does not apply to upstream" for every patch. A guard that fails because it
+    found the wrong tool is worse than one that says it could not find the right one.
+
+    Git for Windows ships GNU patch at <git>\\usr\\bin\\patch.exe, and the runner has git on PATH. The path is derived
+    from git itself rather than hard-coded: this machine's git is on E:, and C:\\Program Files\\Git does not exist.
+    """
+    if os.name == "nt":
+        git = shutil.which("git")
+        if git:
+            # <git>\\cmd\\git.exe -> <git>\\usr\\bin\\patch.exe
+            root = os.path.dirname(os.path.dirname(os.path.abspath(git)))
+            cand = os.path.join(root, "usr", "bin", "patch.exe")
+            if os.path.isfile(cand):
+                return cand
+        for base in (os.environ.get("ProgramFiles", r"C:\Program Files"),
+                     os.environ.get("ProgramW6432", r"C:\Program Files")):
+            cand = os.path.join(base, "Git", "usr", "bin", "patch.exe")
+            if os.path.isfile(cand):
+                return cand
+    return shutil.which("patch")
+
+
+PATCH = find_patch()
+if not PATCH:
+    sys.exit("test_ohos_patches.py: no patch found - install Git for Windows (it ships GNU patch), or put one on PATH")
+
 patches = sorted(os.path.relpath(os.path.join(dp, f), PATCHES).replace(os.sep, "/")
                  for dp, dn, fn in os.walk(PATCHES) for f in fn if f.endswith(".patch"))
 tmp = tempfile.mkdtemp(prefix="ohos_guard_apply_")
@@ -50,7 +83,7 @@ for p in patches:
     if rel not in u: fails.append(f"{p}: target not in upstream"); continue
     dst = os.path.join(tmp, rel); os.makedirs(os.path.dirname(dst), exist_ok=True)
     shutil.copyfile(u[rel], dst)
-    r = subprocess.run(["patch", "-p1", "-f", "-s"], stdin=open(os.path.join(PATCHES, p), "rb"), cwd=tmp, capture_output=True)
+    r = subprocess.run([PATCH, "-p1", "-f", "-s"], stdin=open(os.path.join(PATCHES, p), "rb"), cwd=tmp, capture_output=True)
     if r.returncode: fails.append(f"{p}: does not apply to upstream ({r.stderr.decode(errors='replace').strip()[:80]})"); continue
     if rel not in o: fails.append(f"{p}: patched file missing from working tree"); continue
     if norm(dst) != norm(o[rel]): fails.append(f"{p}: stale - applying to upstream does not reproduce the working file (re-run export_ohos_patches.py)")
