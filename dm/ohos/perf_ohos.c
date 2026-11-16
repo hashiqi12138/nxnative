@@ -31,7 +31,10 @@ void dm_perf_replay_thread(void) {
 }
 
 // ---- adaptive frame rate: 60 → 40 → 30 fps when the frames do not fit the period the game asks for, and back when they fit with room.
-static const int64_t STEPS[] = {16666667, 25000000, 33333333};   // 60, 40, 30 fps
+// 60 and 30 only: NativeDisplaySoloist quantises a request to the panel's own divisors, and P3.3 measured 45
+// landing on 30.2 Hz - 40 fps (25 ms) is not a rate this panel can hold, so asking for it meant asking for 30
+// while believing the step had worked.
+static const int64_t STEPS[] = {16666667, 33333333};   // 60, 30 fps
 static int g_step, g_adapt = -1; static int64_t g_work_hist[64]; static int g_nwork;
 static int64_t g_last_change, g_last_up, g_up_hold = 2000000000; static int g_ok_frames; static uint64_t g_game_period;
 static int64_t work_pct(int q) {

@@ -343,8 +343,11 @@ static void *present_thread(void *arg) {
     // Raise this thread's scheduling class once, at the top: presenting is a deadline job (one blit and one present
     // per display period) and at the default class the OS was demoting it every frame. See g_present_qos above.
     {
-        int rc = OH_QoS_SetThreadQoS(QOS_DEADLINE_REQUEST);
-        atomic_store(&g_present_qos, rc == 0 ? (uint32_t)QOS_DEADLINE_REQUEST + 1u : 0u);
+        // USER_INTERACTIVE, not DEADLINE_REQUEST: P3.1 measured DEADLINE_REQUEST as demoted in 300 of 300 frames on
+// this device, and P3.3 caught the present thread still asking for it ("present QoS 0x5", the fifth level).
+// darwin_compat.c already uses USER_INTERACTIVE for the same job, so the two disagreed.
+int rc = OH_QoS_SetThreadQoS(QOS_USER_INTERACTIVE);
+        atomic_store(&g_present_qos, rc == 0 ? (uint32_t)QOS_USER_INTERACTIVE + 1u : 0u);
         if (rc != 0) VKLOG("present thread: QoS not raised (%d); it runs at the default class", rc);
     }
     typeof(g_pq[0]) last = {0};
