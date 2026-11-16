@@ -131,3 +131,7 @@ OSStatus AudioConverterFillComplexBuffer(AudioConverterRef c, AudioConverterComp
     (void)c; (void)proc; (void)ref; (void)out; (void)desc; if (packets) *packets = 0; return kAudio_UnimplementedError;
 }
 OSStatus AudioConverterDispose(AudioConverterRef c) { (void)c; return noErr; }
+// The movie library's Flush calls this now (upstream PR #2798): a reset without a decoder to reset is a
+// no-op here, exactly as Dispose is. Returning an error would make Flush log [RED] and dispose the converter
+// it never had.
+OSStatus AudioConverterReset(AudioConverterRef c) { (void)c; return noErr; }

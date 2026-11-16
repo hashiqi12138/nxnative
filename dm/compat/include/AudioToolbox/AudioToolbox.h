@@ -77,3 +77,6 @@ OSStatus AudioConverterNew(const AudioStreamBasicDescription *in, const AudioStr
 OSStatus AudioConverterSetProperty(AudioConverterRef c, AudioConverterPropertyID id, UInt32 size, const void *data);
 OSStatus AudioConverterFillComplexBuffer(AudioConverterRef c, AudioConverterComplexInputDataProc proc, void *ref, UInt32 *packets, AudioBufferList *out, AudioStreamPacketDescription *desc);
 OSStatus AudioConverterDispose(AudioConverterRef c);
+// Upstream's movie Flush resets the converter instead of reopening it (PR #2798). Each platform's
+// AudioToolbox supplies it; this port's stub returns noErr, as Dispose does.
+OSStatus AudioConverterReset(AudioConverterRef c);
