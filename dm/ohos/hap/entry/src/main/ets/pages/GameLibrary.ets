@@ -22,6 +22,90 @@ export interface GameEntry {
   sizeBytes: number;    // bytes on disk (du-style sum of the tree)
   hasData: boolean;     // RomFS/ and mods/main.patched.bin both present
   iconPath: string;     // <root>/icon.jpg when the pack carries one, else ''
+  /** The player locked this build: a host update does not rebuild it (NX Play's "Kept"). */
+  kept: boolean;
+  /** The build predates the host code it was made from, so it may lack fixes the host now has. */
+  stale: boolean;
+}
+
+/**
+ * How far along a game is, as NX Play's Game.State says it: the packages alone, extracted without the rewritten
+ * modules, or ready to start.
+ *
+ * The three cases are not a single "hasData" boolean because the two failures need different answers: an
+ * unextracted folder wants an import, an extracted one wants the pack's modules. A caller that only asks "can it
+ * play" wants isComplete().
+ */
+export enum GameState {
+  /** Only the packages: nothing extracted yet. */
+  NotExtracted,
+  /** RomFS is there but mods/main.patched.bin is not: the rewriter's output never arrived. */
+  Extracted,
+  /** Both are there: startGame can run it. */
+  Ready
+}
+
+/** Which of the three a game is in, from what is on disk. */
+export function gameState(g: GameEntry): GameState {
+  if (!g.hasData) {
+    // hasData is false for both failures; the RomFS alone tells them apart
+    try {
+      fs.accessSync(g.root + '/RomFS');
+      return GameState.Extracted;
+    } catch (e) {
+      return GameState.NotExtracted;
+    }
+  }
+  return GameState.Ready;
+}
+
+/** Whether the game can start: the one question most callers have. */
+export function isComplete(g: GameEntry): boolean {
+  return gameState(g) === GameState.Ready;
+}
+
+/** Whether the device holds a save for this game (a directory with something in it). */
+export function hasSaveData(g: GameEntry): boolean {
+  try {
+    // the save folder is per title, beside the games; the caller's own path is the app's save root
+    const dir: string = g.root.substring(0, g.root.lastIndexOf('/')) + '/../save/' + g.titleId;
+    const names: string[] = fs.listFileSync(dir);
+    return names.length > 0;
+  } catch (e) {
+    return false;
+  }
+}
+
+/** Whether a path exists, without caring why it might not. */
+function hasFile(path: string): boolean {
+  try {
+    fs.accessSync(path);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Whether a game's build predates the host code that made it.
+ *
+ * The comparison is by modification time, which is all the sandbox records: `mods/main.patched.bin` is written when
+ * the game was built, and the host library is written when the host was. A build older than the library may be
+ * missing fixes the library now has - NX Play calls the same thing "App out of date" and offers a rebuild.
+ *
+ * Both files must be there for the answer to mean anything: a game with no build yet is not stale, it is unbuilt,
+ * and saying so is the state badge's job.
+ */
+function isStaleBuild(root: string): boolean {
+  try {
+    const built: number = fs.statSync(root + '/mods/main.patched.bin').mtime * 1000;
+    // the host library sits beside the pack in the app's own files folder, not in the game's
+    const lib: number = fs.statSync(root + '/../../libdmhost.so').mtime * 1000;
+    // a minute of slack: the build and the library are written seconds apart in the same round
+    return built + 60000 < lib;
+  } catch (e) {
+    return false;
+  }
 }
 
 /**
@@ -307,7 +391,13 @@ export function listGames(filesDir: string): GameEntry[] {
       stamp: stamp,
       sizeBytes: size,
       hasData: hasData,
-      iconPath: icon.length > 0 ? root + '/' + icon : ''
+      iconPath: icon.length > 0 ? root + '/' + icon : '',
+      // A `keep` file in the game folder is the player's promise: this build stays as it is, whatever the host
+      // becomes. NX Play writes the same marker in a build folder (Library+GameSettings.swift).
+      kept: hasFile(root + '/keep'),
+      // The build is older than the host code it was made from. The mods' own stamp is the build's date; the host
+      // library's mtime is the code's. A missing pair says nothing, so it is not stale.
+      stale: isStaleBuild(root)
     });
   }
   // newest stamp first: a fresh import floats to the top

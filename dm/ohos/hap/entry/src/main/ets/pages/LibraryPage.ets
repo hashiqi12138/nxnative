@@ -27,6 +27,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { GameDetailSheet } from '../components/GameDetailSheet';
 import { RemotePacksSection } from '../components/RemotePacksSection';
 import { RemoteDownloads } from '../components/RemoteDownloads';
+import { badgesFor, badgeHelp } from '../components/GameBadges';
 
 /** A grid cell: either a game or the add tile. */
 interface Cell {
@@ -857,6 +858,10 @@ struct LibraryPage {
               iconPath: (cell.game as GameEntry).iconPath,
               coverSize: this.coverSize,
               state: this.cardState(cell.game as GameEntry, index),
+              // S5: the game's facts, not one state value. Two fit on a cover at this size; the rest become "+N"
+              // and are readable in the detail sheet, which lists every badge with its full sentence.
+              badges: badgesFor(cell.game as GameEntry, { save: false }),
+              badgeSlots: this.columns >= 4 ? 2 : 3,
               onActivate: () => this.activate(cell),
               onDetails: () => this.openDetail(cell.game as GameEntry)
             })
