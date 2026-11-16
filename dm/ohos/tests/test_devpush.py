@@ -72,9 +72,11 @@ class FakeShell:
 def env(tmp_path, monkeypatch):
     """A DevEco tree, a build tree with a manifest, and a fake shell.
 
-    devpush.py hard-codes its build tree as F:\\ohos_build_dmhost_<game> (line 59: os.path.join('F:', os.sep, ...)),
-    so the fixture uses a unique game id and removes that directory afterwards: the script must be exercised on the
-    path it actually uses, and a monkeypatched is_dir would not change the writes that follow.
+    devpush.py takes its build tree from DM_BUILD_ROOT, falling back to F:\\ohos_build_dmhost_<game> on the machine
+    this project is developed on. The fixture points DM_BUILD_ROOT at tmp_path, so the test runs wherever pytest
+    runs: GitHub's windows-latest has no F: drive, and a hard-coded one made this file's test fail only in CI
+    (measured 2026-11-16). The script must still be exercised on the path it actually writes, and a monkeypatched
+    is_dir would not change the writes that follow - so the real directory is created, under tmp_path.
     """
     deveco = tmp_path / 'deveco'
     (deveco / 'tools' / 'hvigor' / 'bin').mkdir(parents=True)
@@ -85,7 +87,9 @@ def env(tmp_path, monkeypatch):
     (deveco / 'sdk' / 'default' / 'openharmony' / 'toolchains' / 'hdc.exe').write_text('', encoding='utf-8')
 
     game = 'T' + uuid.uuid4().hex[:8]
-    build = pathlib.Path('F:/ohos_build_dmhost_' + game)
+    build_root = tmp_path / 'build_root'
+    build_root.mkdir()
+    build = build_root / ('ohos_build_dmhost_' + game)
     if build.exists():
         shutil.rmtree(build, ignore_errors=True)
     (build / 'AppScope').mkdir(parents=True)
@@ -100,6 +104,8 @@ def env(tmp_path, monkeypatch):
 
     shell = FakeShell(build)
     monkeypatch.setenv('DEVECO_HOME', str(deveco))
+    # devpush.py reads its build root from here (F: is the development machine's, not the runner's)
+    monkeypatch.setenv('DM_BUILD_ROOT', str(build_root))
     monkeypatch.setattr('subprocess.run', shell)
 
     yield tmp_path, deveco, build, lib, shell, game

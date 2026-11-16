@@ -59,7 +59,14 @@ if not lib:
 if not os.path.isfile(lib): sys.exit('devpush: %s is missing' % lib)
 
 # 2. the ASCII build dir: reuse the full install's tree (it holds the placed bulk modules and the manifest)
-build = os.path.join('F:', os.sep, 'ohos_build_dmhost_' + a.game)
+#
+# F: is where this project's builds live on the development machine (an ASCII drive, because DevEco's hvigor
+# chokes on the non-ASCII path the game folders sit under). It is not universal: GitHub's windows-latest runner has
+# only C: and D:, so a hard-coded F: made every CI run fail on this file's test with "F:\ohos_build_dmhost_* not
+# found" (measured 2026-11-16 - the same test that passed here and failed there). DM_BUILD_ROOT overrides it, and
+# the test points it at a temp directory.
+_build_root = os.environ.get('DM_BUILD_ROOT') or os.path.join('F:', os.sep)
+build = os.path.join(_build_root, 'ohos_build_dmhost_' + a.game)
 if not os.path.isdir(build): sys.exit('devpush: %s not found - do a full mkhap.py --data install once first' % build)
 
 # 2b. --data-dir: serve the pack over loopback for the app's own import (P2.1). Neither the shell domain nor the
