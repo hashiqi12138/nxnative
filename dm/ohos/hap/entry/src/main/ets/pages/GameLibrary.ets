@@ -97,10 +97,16 @@ export function setKept(root: string, kept: boolean): boolean {
   }
 }
 
-/** Whether a path exists, without caring why it might not. */
+/**
+ * Whether a path exists, without caring why it might not.
+ *
+ * statSync, not accessSync: on this platform accessSync does not throw for a path that is not there, so every game
+ * came back as kept - both cards showed 已锁定 with no keep file on disk (measured 2026-11-16). statSync throws
+ * ENOENT as it should, and the rest of this file already relies on that.
+ */
 function hasFile(path: string): boolean {
   try {
-    fs.accessSync(path);
+    fs.statSync(path);
     return true;
   } catch (e) {
     return false;
@@ -119,11 +125,15 @@ function hasFile(path: string): boolean {
  */
 function isStaleBuild(root: string): boolean {
   try {
+    // The build's date is the rewritten module's. The host's date is NOT on the filesystem the app can read: the
+    // library lives inside the HAP, not in the sandbox (measured 2026-11-16: nothing named libdmhost.so is under
+    // the app's data folder). So the comparison is against the pack's own manifest, which the import writes when
+    // it stages the data: a module older than the data that was staged with it means the module is from an
+    // earlier round.
     const built: number = fs.statSync(root + '/mods/main.patched.bin').mtime * 1000;
-    // the host library sits beside the pack in the app's own files folder, not in the game's
-    const lib: number = fs.statSync(root + '/../../libdmhost.so').mtime * 1000;
-    // a minute of slack: the build and the library are written seconds apart in the same round
-    return built + 60000 < lib;
+    const staged: number = fs.statSync(root + '/nx2a-data.json').mtime * 1000;
+    // a minute of slack: both are written seconds apart in the same round
+    return built + 60000 < staged;
   } catch (e) {
     return false;
   }

@@ -120,7 +120,17 @@ struct LibraryPage {
     const ctx = this.getUIContext().getHostContext();
     const files: string = ctx?.filesDir ?? '';
     const t0: number = Date.now();
-    this.games = listGames(files);
+    // A throw here used to leave the page showing nothing and saying nothing: listGames walks the disk, and one
+    // unreadable entry took the whole library down with it (measured 2026-11-16: the grid held only the add tile,
+    // and no 'library:' line appeared at all). A library that cannot list a game should still list the others.
+    try {
+      this.games = listGames(files);
+    } catch (e) {
+      const why: string = e instanceof Error ? e.message : JSON.stringify(e);
+      console.error(`library: listing failed: ${why}`);
+      this.showToast('读取游戏列表失败：' + why);
+      this.games = [];
+    }
     const ms: number = Date.now() - t0;
     console.info(`library: ${this.games.length} game(s) in ${ms} ms`);
     if (this.games.length === 0) this.focusIndex = 0;
@@ -871,6 +881,17 @@ struct LibraryPage {
     })
   }
 
+  /**
+   * A grid cell's identity for ForEach (S5).
+   *
+   * The title alone is not enough: kept and stale are read from disk and can change under the same title, and a
+   * ForEach that keys by title reuses the card it already built. Appending the two facts makes a changed game a new
+   * cell, which is what makes the badge follow the switch.
+   */
+  private cellKey(g: GameEntry): string {
+    return g.titleId + (g.kept ? ':k' : '') + (g.stale ? ':s' : '');
+  }
+
   /** The grid itself. */
   @Builder
   grid() {
@@ -900,7 +921,10 @@ struct LibraryPage {
             })
           }
         }
-      }, (cell: Cell, index: number) => cell.isAdd ? 'add' : (cell.game as GameEntry).titleId)
+      // The key carries the facts, not just the title: a game whose kept/stale changed is a different card to
+      // ForEach, so the badge appears the moment the switch is flipped. Keying by title alone made the switch write
+      // the file and reload the list while the card kept drawing the old badges (measured 2026-11-16).
+      }, (cell: Cell, index: number) => cell.isAdd ? 'add' : this.cellKey(cell.game as GameEntry))
     }
     // Grid sizes its cells; a wrapping Flex measured the cover taller than its own height, which squeezed the
     // caption to nothing (measured: the initial rendered 296 vp tall inside a 260 vp cover).
