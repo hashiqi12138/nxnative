@@ -27,7 +27,7 @@ if _libproc is not None:
 
 def members(pgid):
     """[(pid, name)] of the live processes in process group pgid; zombies are not members (they write nothing; the caller or launchd reaps them)"""
-    if sys.platform == 'win32': return []   # no process groups on Windows: nothing to enumerate (Group supervises its direct child only)
+    if sys.platform == 'win32': return []   # DM_OHOS: no process groups on this platform: nothing to enumerate (Group supervises its direct child only)
     if _libproc is None:   # another system: only whether the group has a member, no names
         try: os.killpg(pgid, 0); return [(pgid, '?')]
         except ProcessLookupError: return []
@@ -57,7 +57,7 @@ class Group:
     def __init__(self, cmd, grace=None, drain=None, **popen):   # grace, drain: GRACE and DRAIN when None
         self.grace, self.drain = GRACE if grace is None else grace, DRAIN if drain is None else drain
         self.paused, self.stragglers, self.done = False, [], False
-        self.win = sys.platform == 'win32'
+        self.win = sys.platform == 'win32'   # DM_OHOS: no sessions/process groups there
         if self.win:
             self.p = subprocess.Popen([str(c) for c in cmd], **popen)
         else:
@@ -75,7 +75,7 @@ class Group:
         return False
 
     def _signal(self, sig):
-        if sys.platform == 'win32':   # no process groups: stop the direct child, which is all that runs here
+        if sys.platform == 'win32':   # DM_OHOS: no process groups - stop the direct child, which is all that runs here
             try:
                 if self.p.poll() is None: self.p.kill() if sig == signal.SIGKILL else self.p.terminate()
             except OSError: pass
@@ -106,7 +106,7 @@ class Group:
         Measured 2026-11-16: porter's every run() hung inside this loop, which is what held `porter inspect` and
         `porter port` for ten minutes with an empty log."""
         late, self.done = None, True
-        if self.win:
+        if self.win:   # DM_OHOS: no members() to wait for
             self._signal(sig)
             try: self.p.wait(timeout=self.grace)
             except subprocess.TimeoutExpired:
@@ -141,7 +141,7 @@ class Group:
         not apply: no member of a group can hold the pipe, because there are no groups."""
         out = self.p.stdout
         assert out is not None, 'lines() reads a group started with stdout=PIPE'
-        if sys.platform == 'win32':
+        if sys.platform == 'win32':   # DM_OHOS: selectors cannot wait on a pipe here
             # The caller's contract is text (run() writes every line into a text log): decode here, as the POSIX path
             # does with its IncrementalNewlineDecoder. Yielding the pipe's bytes instead made run() raise on f.write and
             # left it in the exception path, where stop() then spun for ever (measured 2026-11-16).

@@ -93,7 +93,7 @@ def is_image(path):
 
 def _resolve(path):
     p = _os.path.abspath(_os.fsdecode(path))
-    # Two separators meet in one string here, and both are legal in it. The filesystem part uses the platform's
+    # DM_OHOS: two separators meet in one string here, and both are legal in it. The filesystem part uses the platform's
     # separator (splitting on '/' alone, as this once did, leaves 'F:\NS\...\RomFS.img' as one part that does not end
     # in '.img' on Windows, so nothing inside an image resolves and romfs.os.walk() falls back to the real os.walk()
     # and calls a 1.1 GB image empty). The part after the image is the image's OWN path and always uses '/', because
@@ -142,6 +142,7 @@ class _File(io.RawIOBase):
         # os.pread is POSIX-only. Windows has no read-at-offset on a descriptor, and lseek+os.read there returns
         # short reads on a descriptor opened through os.open (measured 2026-11-16: 2446 of 9836 bytes, which made
         # four .xnb effects look truncated), so the fallback opens the image as a file object and seeks on it.
+        # DM_OHOS: no pread on this platform
         if hasattr(_os, 'pread'):
             data = _os.pread(self.fd, size, self.start + self.pos)
         else:
@@ -232,6 +233,7 @@ def walk(top, topdown=True, onerror=None, followlinks=False):
     # content hashes under different names (measured 2026-11-16). Only the image's part is translated; a path
     # outside any image keeps its platform form.
     def shown(path):
+        # DM_OHOS: an image's own path uses '/'
         resolved = _resolve(path)
         if not resolved: return str(path)
         image, relative = resolved
@@ -287,6 +289,7 @@ class _PathOps:
         the platform's. Callers build a source name as join(dirpath, filename) out of walk(), so a Windows '\\' here
         put every shader under '/Content\\Effects\\Border.xnb' - not the name the profile's tables hold (measured
         2026-11-16: 24 shaders landed in ps_other.bin instead of ps_content.bin, with identical content hashes)."""
+        # DM_OHOS: '/' inside an image, the platform's separator outside
         if parts and isinstance(parts[0], str) and _resolve(parts[0]): return '/'.join(p.replace(_os.sep, '/').strip('/') if i else p for i, p in enumerate(parts))
         return _os.path.join(*parts)
     @staticmethod
