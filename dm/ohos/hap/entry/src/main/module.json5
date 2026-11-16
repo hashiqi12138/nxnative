@@ -19,6 +19,16 @@
         "name": "ohos.permission.INTERNET"
       }
     ],
+    // P3.3: GraphicsAccelerateKit's LTPO entry point. HarmonyOS decides whether an app is a game from its store
+    // category plus the user's per-game switch, and a sideloaded HAP has neither - so the governor had no idea, and
+    // the device's GPU sat at 308 MHz (GpuLoadLevel 1) while Breath of the Wild's frame work took 33 ms. This
+    // metadata is the declaration the OpenGTX guide asks for; without it the calls succeed but change nothing.
+    "metadata": [
+      {
+        "name": "GraphicsAccelerateKit_LTPO",
+        "value": "true"
+      }
+    ],
     "abilities": [
       {
         "name": "EntryAbility",

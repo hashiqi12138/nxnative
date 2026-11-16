@@ -29,6 +29,11 @@ static _Atomic int g_lost;                                          // the windo
 // (present_thread) and was never raised: it ran at QoS 0, so each frame's blit competed with background work and the
 // present path's time swung between 9 and 31 ms. Measured on the device (2026-11-16): the replay thread reported
 // "demoted in 301 of 301 frames" while "present QoS 0".
+// P3.3: OpenGTX tells the platform this is a game (opengtx_ohos.c). Declared here because the present path is
+// where the frame count lives; the implementation is a no-op when the library is absent.
+int dm_opengtx_init(const char *package, const char *app_version, int target_fps, int vulkan);
+void dm_opengtx_frame(uint64_t frames_presented);
+void dm_opengtx_shutdown(void);
 static _Atomic uint32_t g_present_qos;
 
 static void swap_destroy(void) {
@@ -206,6 +211,9 @@ static void present_slow(const char *what, double a, double s, double p, double 
 static void present_window(vkimg_t *im, const int crop[4]) {
     static int dbg;   // the first frames step by step into the log: what a present-path fault would leave behind
     g_shot_total++;
+    // Tell the platform this is a game (P3.3). The device's GPU sat at 308 MHz with GpuLoadLevel 1 while the frame
+    // work took 33 ms, because a sideloaded HAP carries no store category and the governor had nothing to go on.
+    dm_opengtx_frame(g_shot_total);
     struct timespec t0; clock_gettime(CLOCK_MONOTONIC, &t0);
     int cx = crop ? crop[0] : 0, cy = crop ? crop[1] : 0, cw = crop && crop[2] ? crop[2] : (int)im->w, ch = crop && crop[3] ? crop[3] : (int)im->h;
     uint32_t k = g_pi++ % 8;
@@ -367,7 +375,18 @@ int rc = OH_QoS_SetThreadQoS(QOS_USER_INTERACTIVE);
     }
     return NULL;
 }
-static void present_thread_start(void) { pthread_t t; pthread_create(&t, NULL, present_thread, NULL); pthread_detach(t); }
+static void present_thread_start(void) {
+    // The platform's frame governor has no idea a sideloaded HAP is a game: P3.3 measured the GPU sitting at 308 MHz
+    // (GpuLoadLevel 1) while frame work took 33 ms. OpenGTX is how the app says otherwise. It needs the app's own
+    // bundle name, which is the template's - the pack records the game's package separately.
+    {
+        const char *fps = getenv("DM_FPS_TARGET");
+        int target = fps ? atoi(fps) : 60;
+        if (target <= 0) target = 60;
+        dm_opengtx_init("dev.eden_emu.ohos", "1.0.0", target, 1);
+    }
+    pthread_t t; pthread_create(&t, NULL, present_thread, NULL); pthread_detach(t);
+}
 static uint64_t present_enqueue(vkimg_t *im, const int crop[4], uint64_t n) {
     static int sync = -1; static pthread_once_t once = PTHREAD_ONCE_INIT;
     if (sync < 0) sync = getenv("DM_VK_SYNC_PRESENT") != NULL;
