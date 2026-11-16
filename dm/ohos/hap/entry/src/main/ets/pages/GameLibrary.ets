@@ -76,6 +76,27 @@ export function hasSaveData(g: GameEntry): boolean {
   }
 }
 
+/**
+ * Lock or unlock a build (S5, NX Play's "Keep This Build").
+ *
+ * The marker is a file, not a preference: it travels with the game's folder, survives a reinstall of the app, and
+ * a rebuild in another tool can see it. `keep` beside `mods/` is the whole protocol.
+ */
+export function setKept(root: string, kept: boolean): boolean {
+  const path: string = root + '/keep';
+  try {
+    if (kept) {
+      const f = fs.openSync(path, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE);
+      fs.closeSync(f);
+    } else {
+      fs.unlinkSync(path);
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 /** Whether a path exists, without caring why it might not. */
 function hasFile(path: string): boolean {
   try {

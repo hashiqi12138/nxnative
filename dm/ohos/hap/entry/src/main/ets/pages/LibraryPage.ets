@@ -14,7 +14,7 @@ import { picker } from '@kit.CoreFileKit';
 import { router } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { Bg, Text as TextToken, Semantic, CoverPalette, Space, Font, Radius, Motion, Size } from '../theme/Tokens';
-import { GameEntry, gamesDir, listGames, deleteGame, humanSize, writeMeta, ImportStatus, verifyGame, gameVersion, VerifyResult } from './GameLibrary';
+import { GameEntry, gamesDir, listGames, deleteGame, humanSize, writeMeta, ImportStatus, verifyGame, gameVersion, VerifyResult, setKept } from './GameLibrary';
 import { readPackHeader, importPack, readStamp, writeStamp, PackInfo, ImportProgress } from './PackImport';
 import { saveDir, backupDir, packSave, importSave, readSaveHeader, saveSize, hasBackup, SaveInfo, SaveProgress } from './SaveData';
 import { GameCard, CardState } from '../components/GameCard';
@@ -433,6 +433,37 @@ struct LibraryPage {
    * Check the game's tree. Cheap by design: the loader's two entries plus the metadata and stamp, not a hash of
    * 14 GB (which would take minutes and answer nothing the player asked).
    */
+  /**
+   * Lock or unlock the build the sheet is showing (S5).
+   *
+   * A rebuild is not started here: locking is a decision about the build that is on disk now, and the reload after
+   * it is what makes the badge appear. The toast says which way it went, because the switch alone does not say that
+   * the marker was written.
+   */
+  private setKept(on: boolean): void {
+    const g: GameEntry | null = this.detailGame;
+    if (g === null) return;
+    const ok: boolean = setKept(g.root, on);
+    this.showToast(ok ? (on ? '已锁定这个构建' : '已解锁') : '无法写入锁定标记');
+    if (!ok) return;
+    // reload so the badge and the switch agree with what is on disk, then re-read the sheet's game
+    this.reload();
+    const again: GameEntry | undefined = this.games.find((x: GameEntry): boolean => x.titleId === g.titleId);
+    if (again !== undefined) this.detailGame = again;
+  }
+
+  /**
+   * Rebuild the game the sheet is showing (S5).
+   *
+   * The build is done by the pack round, not by the app: the app has no rewriter. So this says what to do rather
+   * than pretending to do it - NX Play owns nxplay and can start a build; we cannot.
+   */
+  private rebuildDetail(): void {
+    const g: GameEntry | null = this.detailGame;
+    if (g === null) return;
+    this.showToast(`重新构建 ${g.titleId}：运行 porter port，或重新导入这个游戏的 .nxpk`);
+  }
+
   private verifyDetail(): void {
     const g: GameEntry | null = this.detailGame;
     if (g === null) return;
@@ -808,6 +839,8 @@ struct LibraryPage {
           if (g !== null) this.launch(g);
         },
         onVerify: () => this.verifyDetail(),
+        onKeptChange: (on: boolean) => this.setKept(on),
+        onRebuild: () => this.rebuildDetail(),
         onDelete: () => this.askDelete(),
         onClose: () => {
           this.detailVisible = false;
