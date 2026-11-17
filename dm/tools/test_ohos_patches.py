@@ -29,10 +29,17 @@ else:
     repo = subprocess.run(["git", "-C", OURS, "rev-parse", "--show-toplevel"], capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
     if subprocess.run(["git", "-C", repo, "rev-parse", "--verify", "--quiet", "upstream/main"], capture_output=True).returncode:
         sys.exit("test_ohos_patches.py: no upstream/main ref in the nested repo - run dm/tools/sync_upstream.py first, or pass --upstream-dir")
-    up_root = tempfile.mkdtemp(prefix="ohos_guard_")
     # Python's tarfile, not bsdtar, and the temp dir is always cleaned up: leaked extractions (one full
     # upstream tree per run) once filled C:, and bsdtar on a full disk reports every create as a
     # misleading "No such file or directory" under its \\?\-prefixed temp path.
+    # The extraction goes beside the repository, not in %TEMP%: one upstream tree is large, and on this
+    # machine %TEMP% is on a system drive with a few hundred MB free while the repository's drive has
+    # room. A full system drive failed this guard with "No space left on device" instead of a verdict.
+    tmp_parent = os.path.dirname(os.path.dirname(repo)) or None
+    try:
+        up_root = tempfile.mkdtemp(prefix="ohos_guard_", dir=tmp_parent)
+    except OSError:
+        up_root = tempfile.mkdtemp(prefix="ohos_guard_")
     try:
         with tempfile.TemporaryFile() as tar:
             subprocess.run(["git", "-C", repo, "archive", "upstream/main", "dm/"], stdout=tar, check=True); tar.seek(0)
