@@ -94,6 +94,7 @@ uint64_t vk_replay_ns(void) { return g_vkst.ns_exec; }   // the replay time so f
 static int g_fdz;  // DM_VK_FDZ（实时）：Adreno 深度剔除规避默认仅对 Qualcomm 开启，显式环境变量优先（pipeline key fdz）
 static int g_x_nosetc, g_x_nodrvc, g_x_landcut, g_x_nokeep, g_x_nobc, g_x_cutany, g_lrz_touch, g_xfb_on = 1, g_x_nogs, g_spv_alt, g_x_noclipmap; int g_x_noshc;   // g_xfb_on: DM_VK_XFB=0 captures no transform feedback (A/B)
 static int g_x_nosetmemo, g_x_setverify;   // DM_VK_X_NOSETMEMO=1 (live, A/B): no per-stage set memo; DM_VK_X_SETVERIFY=1 (live): one memo hit in 64 checked (see stage_set)
+static int g_x_batchw = 1;   // DM_VK_X_BATCHW=0 (live, A/B): write a new set's descriptors one vkUpdateDescriptorSets per descriptor (the old Maleoon workaround); default one call for the whole set
 static int g_x_rtdup;   // DM_VK_RT_DUP (live): 1 changes dynamic stores only; 2 removes exact duplicate views in traditional render passes
 static int g_x_rtalias;   // DM_VK_RT_ALIAS (live, default 1): aliased colour slots store through a scratch image copied back after the pass
 static int g_x_rtaliasfmt;   // DM_VK_RT_ALIAS_FMT (live): force the scratch's VkFormat (diagnostic; copy-back skipped when it differs from the target)
@@ -169,6 +170,7 @@ static void x_read(void) { const char *c = getenv("DM_VK_CB_DRAWS"); g_x_cbdraws
     { const char *tf = getenv("DM_VK_TRACE_FRAME"); snprintf(g_x_traceframe, sizeof g_x_traceframe, "%s", tf && strcmp(tf, "0") ? tf : ""); }
     { const char *tz = getenv("DM_VK_TRACE_SIZE"); snprintf(g_x_tracesize, sizeof g_x_tracesize, "%s", tz ? tz : ""); } const char *e; g_x_nobar = (e = getenv("DM_VK_X_NOBAR")) && atoi(e); g_x_depth = (e = getenv("DM_VK_X_DEPTH")) && atoi(e); g_x_color = (e = getenv("DM_VK_X_COLOR")) && atoi(e);
     g_x_nosetc = (e = getenv("DM_VK_X_NOSETC")) && atoi(e); g_x_nodrvc = (e = getenv("DM_VK_X_NODRVC")) && atoi(e); g_x_landcut = (e = getenv("DM_VK_X_LANDCUT")) && atoi(e);
+    g_x_batchw = !((e = getenv("DM_VK_X_BATCHW")) && !atoi(e));
     g_x_nokeep = (e = getenv("DM_VK_X_NOKEEP")) && atoi(e); g_x_nobc = (e = getenv("DM_VK_X_NOBC")) && atoi(e); g_x_noshc = (e = getenv("DM_VK_X_NOSHC")) && atoi(e); g_x_cutany = (e = getenv("DM_VK_X_CUTANY")) && atoi(e); g_x_nogs = (e = getenv("DM_VK_X_NOGS")) && atoi(e); g_spv_alt = (e = getenv("DM_VK_SPV_ALT")) && atoi(e); g_x_noclipmap = (e = getenv("DM_VK_X_NOCLIPMAP")) && atoi(e); g_rd_touch = !((e = getenv("DM_VK_RD_TOUCH")) && !atoi(e));
     g_lrz_touch = !((e = getenv("DM_VK_LRZ_TOUCH")) && !atoi(e)); g_fdz = (e = getenv("DM_VK_FDZ")) ? (atoi(e) == 2 ? 2 : !!atoi(e)) : V.props.vendorID == 0x5143u; g_xfb_on = !((e = getenv("DM_VK_XFB")) && !atoi(e));
     g_psplit = (e = getenv("DM_VK_PASS_SPLIT")) ? atoi(e) : 0; g_setsplit = (e = getenv("DM_VK_SETSPLIT")) && atoi(e); g_psplit_depth = (e = getenv("DM_VK_PASS_SPLIT_DEPTH")) && atoi(e);
@@ -586,7 +588,8 @@ void vk_prof_end(void) {
       VKLOG("sets (present %llu): %llu reused, %llu new; hash %.1f ms, collect %.1f ms, alloc+write %.1f ms",
           (unsigned long long)g_tex_frame, (unsigned long long)g_set_hits, (unsigned long long)g_set_new,
           g_ns_set_hash * 1e-6, g_ns_set_build * 1e-6, g_ns_set_new * 1e-6);
-      extern uint64_t g_set_memo, g_set_memo_bad; VKLOG("  set memo: %llu hits (%llu differences in verify mode)", (unsigned long long)g_set_memo, (unsigned long long)g_set_memo_bad); }
+      extern uint64_t g_set_memo, g_set_memo_bad; VKLOG("  set memo: %llu hits (%llu differences in verify mode)", (unsigned long long)g_set_memo, (unsigned long long)g_set_memo_bad);
+      extern uint64_t g_ubd_shadows, g_ubd_bytes; VKLOG("  ubd shadows: %llu (%.1f MB)", (unsigned long long)g_ubd_shadows, g_ubd_bytes * 1e-6); }
     VKLOG("slow replay (present %llu): %.1f ms; pipelines built here %llu in %.1f ms, textures %.1f ms (%llu packaged uploads, %.1f ms of it), pools sync %.1f ms, shader modules %.1f ms, pipeline binds %.1f ms, descriptor sets %.1f ms, cuts %.1f ms, compute pipelines %.1f ms, other %.1f ms",
           (unsigned long long)g_tex_frame, tot * ms, (unsigned long long)(g_vkst.pipes_built - g_prof_pipes0), g_prof_ns[0] * ms, g_prof_ns[1] * ms, (unsigned long long)(g_pkg_n - g_prof_npkg0),
           (g_pkg_ns - g_prof_pkg0) * ms, g_prof_ns[2] * ms, g_prof_ns[3] * ms, g_prof_ns[4] * ms, g_prof_ns[5] * ms, g_prof_ns[6] * ms, g_prof_ns[7] * ms, (tot > known ? tot - known : 0) * ms);
@@ -1503,7 +1506,8 @@ static VkDescriptorSet stage_set(int st, vkshader_t *s, uint32_t *dofs) {
     if (g_setc[k].epoch == g_set_epoch && g_setc[k].h == h && g_setc[k].l == s->dsl && !g_tracing && !g_x_nosetc) { g_set_hits++; set = g_setc[k].set; }
     else { set = vk_alloc_set(s->dsl); g_set_new++;
         for (uint32_t i = 0; i < nw; i++) w[i].dstSet = set;
-        for (uint32_t i = 0; i < nw; i++) vkUpdateDescriptorSets(V.dev, 1, &w[i], 0, NULL);   // Maleoon drops later writes in a multi-descriptor update
+        if (g_x_batchw) vkUpdateDescriptorSets(V.dev, nw, w, 0, NULL);   // one call for the whole set (the per-write loop cost ~16 ms/frame in driver calls)
+        else for (uint32_t i = 0; i < nw; i++) vkUpdateDescriptorSets(V.dev, 1, &w[i], 0, NULL);   // Maleoon drops later writes in a multi-descriptor update (A/B fallback)
         g_setc[k].h = h; g_setc[k].epoch = g_set_epoch; g_setc[k].l = s->dsl; g_setc[k].set = set; g_ns_set_new += tick() - tb2; }
     // verify: the same content (hash), integer-texel bindings and dynamic offsets as the memo gave. A lone difference in dofs alone can be a driver segment
     // copied again after its g_drvc entry was taken by another (the memo's copy is as good); anything repeated is a dependency the memo misses
