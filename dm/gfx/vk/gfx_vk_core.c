@@ -371,7 +371,10 @@ void vk_pool_set_flags(const void *mem, int flags) {
     for (int i = 0; i < g_npool; i++) if (g_pool[i].base == (uint64_t)(uintptr_t)mem) g_pool[i].flags = flags;   // (every chunk of it)
     pthread_rwlock_unlock(&g_pool_mu);
 }
-static uint64_t g_sync_bytes, g_sync_full;   // copied pools: bytes copied by the incremental sync, full copies
+static uint64_t g_sync_bytes, g_sync_full;
+// cumulative copy-back time and the number of submissions it covered: the completion thread's share of a frame,
+// which the replay's own timers cannot see. Printed beside the pool sync line so one log read gives both.
+static uint64_t g_cb_ns, g_cb_n;   // copied pools: bytes copied by the incremental sync, full copies
 // Copied pools: the guest's bytes into the GPU copy. The first sync copies the whole pool; later ones copy only the 64 KB blocks with pages the CPU wrote since the last
 // sync (nvn_dirty's write-protect tracking: a block is protected again before it is copied, so a write during the copy is caught by the next sync). An 860 MB
 // pool copied whole at every submission (Unicorn Overlord on a Legion Y700 2023) ran at a few frames a second
@@ -399,7 +402,7 @@ static void vk_pools_sync_(VkCommandBuffer cb) {
         p->stamp0 = p->stamp; p->stamp = st;
     }
     pthread_rwlock_unlock(&g_pool_mu);
-    static uint64_t n, last; if (++n % 600 == 0) { VKLOG("copied pools: %.1f MB synced in the last 600 submissions (%.2f MB each), %llu full copies so far", (g_sync_bytes - last) / 1048576.0, (g_sync_bytes - last) / 600.0 / 1048576.0, (unsigned long long)g_sync_full); last = g_sync_bytes; }
+    static uint64_t n, last; if (++n % 100 == 0) { VKLOG("copied pools: %.1f MB synced in the last 100 submissions (%.2f MB each), %llu full copies so far; copy-back %.2f ms a submission", (g_sync_bytes - last) / 1048576.0, (g_sync_bytes - last) / 100.0 / 1048576.0, (unsigned long long)g_sync_full, g_cb_n ? g_cb_ns / 1e6 / (double)g_cb_n : 0.0); last = g_sync_bytes; }
 }
 // Copied pools after a submission: what the GPU wrote, back into the guest's pages. A pool never synced yet is left alone (its copy holds nothing of the game's).
 // A CPU-uncached pool (vk_pool_set_flags) takes back only the ranges the submission's GPU writes covered (sub_gpu_wrote):
@@ -904,10 +907,10 @@ static void *completion_main(void *a) {
         double w_wait = ms_since_(&w0);
         // A fence that arrives long after its GPU work did is the driver's wait, not ours: the GPU time of the same frame is in the long-frame line
         { clock_gettime(CLOCK_MONOTONIC, &w1); long ms = (long)((w1.tv_sec - w0.tv_sec) * 1000 + (w1.tv_nsec - w0.tv_nsec) / 1000000);
-          static int nlog; if (ms >= 50 && nlog < 30) { nlog++; VKLOG("completion: fence %llu signalled after %ld ms (polling %d)", (unsigned long long)c->fence, ms, vk_pollwait()); } }
-        struct timespec p0; clock_gettime(CLOCK_MONOTONIC, &p0);
+          static int nlog; if (ms >= 50 && nlog < 30) { nlog++; VKLOG("completion: fence %llu signalled after %ld ms (polling %d)", (unsigned long long)c->fence, ms, vk_pollwait()); } }        struct timespec p0; clock_gettime(CLOCK_MONOTONIC, &p0);
         if (g_shadow_pools && c->rslot >= 0) pools_copy_back(&g_slot[c->rslot]);
         double w_pool = ms_since_(&p0);
+        g_cb_ns += (uint64_t)(w_pool * 1e6); g_cb_n++;
         { double tot = ms_since_(&w0); static int nlog; if (tot >= 50 && nlog < 30) { nlog++; VKLOG("completion: fence %llu total %.1f ms (wait %.1f, pool copy-back %.1f, queries+ops %.1f)",
             (unsigned long long)c->fence, tot, w_wait, w_pool, tot - w_wait - w_pool); } }
         if (g_tsq && c->slot >= 0) { uint64_t t[2]; if (vkGetQueryPoolResults(V.dev, g_tsq, 2 * (uint32_t)c->slot, 2, sizeof t, t, 8, VK_QUERY_RESULT_64_BIT) == VK_SUCCESS && t[1] > t[0])
