@@ -1,0 +1,12 @@
+// Linker-collected registrations are walked as arrays of their entry type.
+#pragma once
+
+// Every producer in a section uses the same type. Keep its natural alignment:
+// stronger per-global alignment or ASan redzones would insert gaps in the array.
+// Suppress only the entry's redzones; its functions and pointed-to data stay checked.
+// OHOS: section("__DATA," sect) names a Mach-O segment, which an ELF object has no counterpart for; DM_SECTION
+// (host/dm.h) is the object-format-aware spelling the rest of the port already uses, and it adds the retain the
+// ELF linker needs so the table is not garbage-collected before getsectiondata / __start_..__stop_ finds it.
+#define DM_REGISTER(sect, type, name, ...) \
+    __attribute__((used, DM_SECTION(sect), aligned(_Alignof(type)), no_sanitize("address"))) \
+    static const type name = __VA_ARGS__

@@ -4,7 +4,54 @@ Play your own Nintendo Switch games natively on iPhone and iPad. Bring your game
 
 It is not an emulator: the game's own code runs directly on the Apple chip, with Switch graphics rebuilt on Metal. Nothing from any game is in this repository, and the project is not affiliated with Nintendo or any game publisher.
 
-## Acknowledgements
+[Games](#games) · [Community front ends](#community-front-ends) · [Requirements](#requirements) · [How to play](#how-to-play) · [Discussions](#discussions) · [For developers](#for-developers)
+
+## Games
+
+The full [tested games table](dm/games/README.md#games) includes original Switch games, tested builds, engines and graphics APIs. Each game's note records its tested platforms, progress and known issues.
+
+These Switch 2 games have passed Mac gameplay testing. Build them from a [`.nup` file or a dump folder](#switch-2-games):
+
+- [Donkey Kong Bananza](dm/games/040074A01BF12000/README.md)
+- [Fast Fusion](dm/games/040041E0212AE000/README.md)
+- [Fire Emblem Fortune's Weave](dm/games/04007EF01F8AE000/README.md) — up to 120 fps
+- [Hyrule Warriors: Age of Imprisonment](dm/games/04003F40232DE000/README.md)
+- [Kirby Air Riders](dm/games/040077201BE50000/README.md)
+- [Mario Kart World](dm/games/0400C3F00006E000/README.md)
+- [Mario Tennis Fever](dm/games/0400D4201C6EA000/README.md)
+- [Nintendo Switch 2 Welcome Tour](dm/games/040057C02159A000/README.md) — Area A tested; exhibits need further testing
+- [Nintendo Switch Sports Resort](dm/games/04008E001F098000/README.md)
+- [Orbitals](dm/games/040032B023CA4000/README.md) — two players: a controller for player 2
+- [Pokémon Pokopia](dm/games/0400A3A01EE4C000/README.md)
+- [PRAGMATA](dm/games/0400C76024710000/README.md)
+- [Splatoon Raiders](dm/games/0400380020056000/README.md)
+- [Star Fox](dm/games/0400E88025B1A000/README.md)
+- [The Legend of Zelda: Ocarina of Time](dm/games/0400486024DEC000/README.md)
+- [Yoshi and the Mysterious Book](dm/games/0400245021D2C000/README.md)
+
+## Community front ends
+
+Community projects build on nxnative with tools to turn your games into apps for your iPhone, iPad or Mac without the command line, and libraries to organize and launch them. They are separate projects: questions and bugs about them go to their own pages.
+
+- [NX2Apple](https://github.com/LNPANDY/NX2Apple) — Mac builder with a shared iPhone/iPad game library.
+- [NX Play](https://github.com/varyform/nx-native-wrapper) — Mac library with device installs and save sync.
+- [NxNative Launcher](https://github.com/rennan101/nxnative_Launcher) — Mac launcher with guided builds and controller mapping.
+- [LumaNX](https://github.com/Xc1Ym/LumaNX) — Mac game builder with IPA export.
+- [GameCase](https://github.com/Tiaoge-tou/GameCase) — iOS game library based on LiveContainer.
+
+## Requirements
+
+- **Mac:** Apple silicon, macOS 26.6 or later. Building games requires Xcode 27.2.
+- **iPhone:** A17 Pro chip or later, with iOS 26 or later.
+- **iPad:** M1 chip or later, with iPadOS 26 or later.
+
+The games' textures are BC-compressed, which older iPhones cannot read. Switch 2 builds are tested on the Mac; check each game's note for device-specific validation.
+
+For a game without a profile, the script writes a survey and tries a provisional build with guessed settings. That build may not start; see [Port another game](docs/development.md#port-another-game).
+
+## How to play
+
+Switch 2 games are built from one `.nup` file or a folder of their files, not from NSPs, and are tested on the Mac only: see [Switch 2 games](#switch-2-games).
 
 This project is built on other people's work:
 

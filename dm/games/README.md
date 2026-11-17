@@ -75,6 +75,7 @@ One row per profile; the notes are each profile's `README.md`.
 | [Catherine: Full Body](0100BF00112C0000/README.md) | `0100BF00112C0000` | 1.0.1a | 8.2.1 | Atlus GFD (CRI middleware) | NVN |
 | [Celeste](01002B30028F6000/README.md) | `01002B30028F6000` | 1.4.1.1 | 15.3.2 | MonoGame (C# → C++ by BRUTE) | NVN |
 | [Chained Echoes](0100C510166F0000/README.md) | `0100C510166F0000` | 1.1.1 | 14.3.0 | Unity 2020.3.36f1 IL2CPP, NintendoSDK_movie | NVN |
+| [Cozy Land](0100777022394000/README.md) | `0100777022394000` | 1.0.0 (base) | 17.5.8 | Unity 2023.2.20f1 IL2CPP | NVN |
 | [Cult of the Lamb](01002E7016C46000/README.md) | `01002E7016C46000` | 1.5.28 | 19.3.14 | Unity 2022.3.62f3 IL2CPP, FMOD | NVN |
 | [Cuphead](0100A5C00D162000/README.md) | `0100A5C00D162000` | 1.3.7 | 5.5.0 | Unity 2017.4.9f1 IL2CPP | NVN |
 | [DARK SOULS: REMASTERED](01004AB00A260000/README.md) | `01004AB00A260000` | 1.0.3 | 4.5.0 | FromSoftware's engine | NVN |
@@ -141,6 +142,7 @@ One row per profile; the notes are each profile's `README.md`.
 | [Need for Speed: Hot Pursuit Remastered](010029B0118E8000/README.md) | `010029B0118E8000` | 1.0.3 | 10.4.1 | Criterion's engine (Stellar Entertainment port) | NVN |
 | [NieR:Automata The End of YoRHa Edition](010056B015FE8000/README.md) | `010056B015FE8000` | 1.0.3 | 12.3.9 | PlatinumGames' engine | NVN |
 | [NieR:Automata The End of YoRHa Edition, Asian release](0100B8E016F76000/README.md) | `0100B8E016F76000` | 1.0.3 | 12.3.9 | PlatinumGames' engine | NVN |
+| [Nintendo Switch 2 Welcome Tour](040057C02159A000/README.md) | `040057C02159A000` | v262144 (Switch 2) | 20.5.29 (Ounce) | NintendoWare Bezel Engine 2.16.0 | NVN2 |
 | [Nintendo Switch Sports Resort](04008E001F098000/README.md) | `04008E001F098000` | v65536 (Switch 2) | 22.2.10 (Ounce) | sead / agl / gsys, Havok | NVN2 |
 | [OCTOPATH TRAVELER](010057D006492000/README.md) | `010057D006492000` | 1.0.5 | 3.5.1 | Unreal Engine 4.18 | NVN |
 | [Octopath Traveler 0](01005270232F2000/README.md) | `01005270232F2000` | 1.0.5 | 19.3.13 | Unreal Engine 5 | NVN |
