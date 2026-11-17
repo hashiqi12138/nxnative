@@ -14,5 +14,6 @@ int mavc_decode(mavc *a, const uint8_t *p, int n, int64_t pts_us) { (void)a; (vo
 int mavc_take(mavc *a, int flush, uint8_t *nv12, int w, int h, int64_t *pts_us) { (void)a; (void)flush; (void)nv12; (void)w; (void)h; (void)pts_us; return 0; }
 int mavc_queued(const mavc *a) { (void)a; return 0; }
 int mavc_held(const mavc *a) { (void)a; return 0; }
+int mavc_ready(const mavc *a) { (void)a; return 0; }   // no decoder yet: nothing can come out without a flush
 void mavc_set_rgba(mavc *a) { (void)a; }
 void mavc_drop(mavc *a) { (void)a; }

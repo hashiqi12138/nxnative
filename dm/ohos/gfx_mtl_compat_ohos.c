@@ -9,6 +9,8 @@
 #include "nvn_obj.h"
 #include "nvn_mtl.h"
 #include "nvn_capture.h"
+#include "nvn_accel.h"
+#include "nvn_raytrace.h"
 #include "hle_movie_avc.h"
 
 // ---- globals the Vulkan backend references (gfx_vk_core.c, gfx_vk_shader.c) ----
@@ -116,3 +118,19 @@ void dm_gfx_bufsnap(const char *key, uint64_t a, size_t n, const char *path) { (
 // ---- Objective-C runtime (no ObjC on OHOS; the shared sources' autorelease pools are inert) ----
 void *objc_autoreleasePoolPush(void) { return NULL; }
 void objc_autoreleasePoolPop(void *p) { (void)p; }
+
+// ---- NVN2 ray tracing (upstream 8d62601f, nvn_raytrace.h / nvn_accel.h) ----
+// The Vulkan backend has no acceleration-structure path: a game that builds one gets sizes of 0 and a program
+// that fails to initialize, which is what the caller already handles for a device without the extension. The
+// group handle writes nothing, so its 16-byte token prefix stays zero as the API's contract allows.
+void mtl_as_sizes(const nvn_as_build *build, uint64_t *storage, uint64_t *scratch, uint64_t *update) {
+    (void)build; if (storage) *storage = 0; if (scratch) *scratch = 0; if (update) *update = 0;
+}
+int mtl_rt_program_set(prog_t *program, int count, const NVNshaderData *modules,
+                       uint32_t trace_depth, uint32_t callable_depth, uint32_t flags) {
+    (void)program; (void)count; (void)modules; (void)trace_depth; (void)callable_depth; (void)flags;
+    return 0;   // no ray-tracing pipeline: the program is not initialized
+}
+void mtl_rt_group_handle(const prog_t *program, const int32_t indices[3], void *out16) {
+    (void)program; (void)indices; (void)out16;   // the token prefix stays zero
+}

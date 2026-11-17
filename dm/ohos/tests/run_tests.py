@@ -35,6 +35,7 @@ OWNED = [
     'dm/ohos/build_ohos.py',
     'dm/ohos/devpush.py',
     'dm/ohos/e2e_smoke.py',
+    'dm/ohos/integration_test.py',
     'dm/ohos/mkhap.py',
 ]
 

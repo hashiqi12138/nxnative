@@ -51,6 +51,10 @@ int front_text_input(const char *title, const char *sub, const char *guide, cons
     (void)title; (void)sub; (void)guide; (void)initial; (void)max_chars; (void)out; (void)out_cap;
     return -1;   // no native input box yet: the caller (hle_swkbd.c) treats -1 as "cancelled"
 }
+int front_user_select(const front_user *users, int count, int allow_create, int allow_skip) {
+    (void)users; (void)count; (void)allow_create; (void)allow_skip;
+    return FRONT_USER_CANCEL;   // no native account picker yet: front.h's no-window rule is cancel, never infer a user
+}
 void front_save_failed(int err) { LOG("[ERR] front: a save was not written (errno %d); the previous commit is unchanged", err); }
 
 // ---- startup: paths, environment, the game thread ---------------------------------------------------------------------------------
