@@ -45,18 +45,22 @@ export enum GameState {
   Ready
 }
 
+/**
+ * Whether startGame can run this folder right now: exactly the two paths the loader opens, checked on disk.
+ *
+ * statSync (hasFile), not the cached hasData: a folder whose files were removed after the import kept its
+ * .meta.json saying hasData true, so the card looked playable while Index found no game and fell back to the
+ * self-test scene (Celeste's folder has RomFS/ but no mods/, measured 2026-11-21). The check is two stats.
+ */
+export function isStartable(root: string): boolean {
+  return hasFile(root + '/RomFS') && hasFile(root + '/mods/main.patched.bin');
+}
+
 /** Which of the three a game is in, from what is on disk. */
 export function gameState(g: GameEntry): GameState {
-  if (!g.hasData) {
-    // hasData is false for both failures; the RomFS alone tells them apart
-    try {
-      fs.accessSync(g.root + '/RomFS');
-      return GameState.Extracted;
-    } catch (e) {
-      return GameState.NotExtracted;
-    }
-  }
-  return GameState.Ready;
+  if (isStartable(g.root)) return GameState.Ready;
+  // the RomFS alone tells the two failures apart
+  return hasFile(g.root + '/RomFS') ? GameState.Extracted : GameState.NotExtracted;
 }
 
 /** Whether the game can start: the one question most callers have. */
@@ -396,14 +400,17 @@ export function listGames(filesDir: string): GameEntry[] {
       size = cached.sizeBytes;
       hasData = cached.hasData;
       icon = cached.icon;
+      // The cache is only trusted for the expensive fields (name, size, icon). Whether the game can start is two
+      // stats, and it is the field the launch decision depends on: a folder edited after the import must not keep
+      // reading "ready" here (and then fail in Index).
+      const nowStartable: boolean = isStartable(root);
+      if (nowStartable !== hasData) {
+        hasData = nowStartable;
+        writeMeta(root, stamp, name, size, hasData, icon);
+      }
     } else {
       // no cache, or it describes a different pack: walk once and remember the answer
-      hasData = false;
-      try {
-        hasData = fs.accessSync(root + '/RomFS') && fs.accessSync(root + '/mods/main.patched.bin');
-      } catch (e) {
-        hasData = false;
-      }
+      hasData = isStartable(root);
       name = readPackName(root);
       size = treeSize(root, 60000);
       icon = '';

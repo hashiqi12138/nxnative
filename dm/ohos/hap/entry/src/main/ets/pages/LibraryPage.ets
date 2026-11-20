@@ -14,7 +14,7 @@ import { picker } from '@kit.CoreFileKit';
 import { router } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { Bg, Text as TextToken, Semantic, CoverPalette, Space, Font, Radius, Motion, Size } from '../theme/Tokens';
-import { GameEntry, gamesDir, listGames, deleteGame, humanSize, writeMeta, ImportStatus, verifyGame, gameVersion, VerifyResult, setKept } from './GameLibrary';
+import { GameEntry, gamesDir, listGames, deleteGame, humanSize, writeMeta, ImportStatus, verifyGame, gameVersion, VerifyResult, setKept, isStartable } from './GameLibrary';
 import { readPackHeader, importPack, readStamp, writeStamp, PackInfo, ImportProgress } from './PackImport';
 import { saveDir, backupDir, packSave, importSave, readSaveHeader, saveSize, hasBackup, SaveInfo, SaveProgress } from './SaveData';
 import { GameCard, CardState } from '../components/GameCard';
@@ -226,7 +226,10 @@ struct LibraryPage {
       return;
     }
     const g: GameEntry = cell.game as GameEntry;
-    if (!g.hasData) {
+    // Checked on disk, not from the card's cached hasData: handing an unusable folder to Index lands the player on
+    // the self-test scene with the built-in list, which reads as "the launch did nothing" (Celeste's folder has
+    // RomFS/ but no mods/, measured 2026-11-21).
+    if (!isStartable(g.root)) {
       this.showToast('游戏数据不完整，请重新导入');
       return;
     }
