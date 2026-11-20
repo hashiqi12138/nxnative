@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>   // getpid
+#include <time.h>     // dm_gameperf_sample's throttle
 
 #include "dm.h"
 
@@ -153,9 +154,15 @@ void dm_opengtx_frame(uint64_t frames_presented) {
         GTX_Scene sc;
         memset(&sc, 0, sizeof sc);
         sc.sceneID = s;
+        // The platform validates these two: probe2 got DispatchGameSceneInfo=0 with a non-null description and a
+        // non-zero resolutionCurValue, while leaving them at the memset zero answers "the param of
+        // OpenGTX_GameSceneInfo is invalid" and the scene hint never lands (the GPU then stays at its 308 MHz floor).
+        sc.description = (char *)"playing";
         sc.recommendFPS = g.target_fps;
         sc.minFPS = 30;
         sc.maxFPS = g.target_fps;
+        sc.resolutionCurValue.height = 1080;
+        sc.resolutionCurValue.width = 1920;
         int rc = g.scene(g.ctx, &sc);
         if (!rc) {
             g.scene_id = s;
@@ -176,4 +183,68 @@ void dm_opengtx_shutdown(void) {
     g.ctx = NULL;
     g.on = 0;
     LOG("opengtx: deactivated");
+}
+
+// ---- GamePerformance: read the GPU's real clock / load back (DM_GAMEPERF=1) --------------------------------------
+// libgame_performance.z.so is how probe2 measured "GpuLoadLevel 1, CurrentFrequency 308000 kHz" with no game hint.
+// Sampling it from the present path turns the LTPO fix into something measurable: the frequency climbing off the
+// 308 MHz floor is the proof the governor actually boosted, not just that the calls returned 0. All dlopen/dlsym,
+// so a device without the library simply logs nothing. The getters share one signature (handle, int32_t*).
+typedef struct GP_Init GP_Init; typedef struct GP_Gpu GP_Gpu; typedef struct GP_Thermal GP_Thermal;
+typedef int (*gp_get_fn)(GP_Gpu *, int32_t *);
+static struct {
+    int state;   // 0 untried, 1 ready, 2 absent / failed
+    int (*qgpu)(GP_Gpu **);
+    gp_get_fn load, freq, bw;
+    int (*dgpu)(GP_Gpu **);
+    int (*qth)(void *, GP_Thermal **);
+    int (*tlevel)(GP_Thermal *, int32_t *);
+    int (*dth)(GP_Thermal **);
+} g_gp;
+static void gp_init(void) {
+    g_gp.state = 2;
+    void *h = dlopen("libgame_performance.z.so", RTLD_NOW);
+    if (!h) { LOG("gameperf: libgame_performance.z.so is not on this device"); return; }
+    int (*ci)(GP_Init **) = (int (*)(GP_Init **))dlsym(h, "HMS_GamePerformance_CreateInitParameters");
+    int (*sb)(GP_Init *, const char *) = (int (*)(GP_Init *, const char *))dlsym(h, "HMS_GamePerformance_InitParameters_SetBundleName");
+    int (*sv)(GP_Init *, const char *) = (int (*)(GP_Init *, const char *))dlsym(h, "HMS_GamePerformance_InitParameters_SetAppVersion");
+    int (*in)(GP_Init *) = (int (*)(GP_Init *))dlsym(h, "HMS_GamePerformance_Init");
+    int (*di)(GP_Init **) = (int (*)(GP_Init **))dlsym(h, "HMS_GamePerformance_DestroyInitParameters");
+    g_gp.qgpu = (int (*)(GP_Gpu **))dlsym(h, "HMS_GamePerformance_QueryGpuInfo");
+    g_gp.load = (gp_get_fn)dlsym(h, "HMS_GamePerformance_GpuInfo_GetGpuLoadLevel");
+    g_gp.freq = (gp_get_fn)dlsym(h, "HMS_GamePerformance_GpuInfo_GetCurrentFrequency");
+    g_gp.bw = (gp_get_fn)dlsym(h, "HMS_GamePerformance_GpuInfo_GetBandwidthLoadLevel");
+    g_gp.dgpu = (int (*)(GP_Gpu **))dlsym(h, "HMS_GamePerformance_DestroyGpuInfo");
+    g_gp.qth = (int (*)(void *, GP_Thermal **))dlsym(h, "HMS_GamePerformance_QueryThermalInfo");
+    g_gp.tlevel = (int (*)(GP_Thermal *, int32_t *))dlsym(h, "HMS_GamePerformance_ThermalInfo_GetThermalLevel");
+    g_gp.dth = (int (*)(GP_Thermal **))dlsym(h, "HMS_GamePerformance_DestroyThermalInfo");
+    if (!ci || !sb || !in || !g_gp.qgpu || !g_gp.load || !g_gp.freq || !g_gp.dgpu) { LOG("gameperf: the library is there but not the init/query entry points"); return; }
+    GP_Init *p = NULL;
+    if (ci(&p) || !p) { LOG("gameperf: CreateInitParameters failed"); return; }
+    sb(p, "dev.eden_emu.ohos"); if (sv) sv(p, "1.0.0");
+    int rc = in(p); if (di) di(&p);
+    if (rc) { LOG("gameperf: Init failed (%d)", rc); return; }
+    g_gp.state = 1;
+    LOG("gameperf: ready; sampling the GPU clock/load every 3 s");
+}
+// Called once a present from mtl_present; throttled to one sample every 3 s so the platform query stays cheap.
+// mtl_present runs on the single replay/present caller (the same assumption as last_exec / g_vkst above); the
+// asynchronous present_thread only blits and never calls this, so g_gp / last need no lock.
+void dm_gameperf_sample(void) {
+    const char *e = getenv("DM_GAMEPERF"); if (!e || !atoi(e)) return;
+    static uint64_t last; struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
+    uint64_t now = (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec;
+    if (last && now - last < 3000000000ull) return; last = now;
+    if (!g_gp.state) gp_init();
+    if (g_gp.state != 1) return;
+    GP_Gpu *g = NULL; int rc = g_gp.qgpu(&g);
+    if (rc || !g) { LOG("gameperf: QueryGpuInfo rc %d", rc); return; }
+    int32_t lv = -1, f = -1, b = -1;
+    g_gp.load(g, &lv); g_gp.freq(g, &f); if (g_gp.bw) g_gp.bw(g, &b);
+    int32_t tl = -1; int trc = -1;
+    if (g_gp.qth && g_gp.tlevel && g_gp.dth) { GP_Thermal *th = NULL; trc = g_gp.qth(NULL, &th);   // NULL params: probe2 got 401 here, best-effort only
+        if (!trc && th) { g_gp.tlevel(th, &tl); if (g_gp.dth) g_gp.dth(&th); } }
+    if (!trc && tl >= 0) LOG("gameperf: GPU load %d/10, freq %d kHz, bandwidth %d/10; thermal level %d", lv, f, b, tl);
+    else LOG("gameperf: GPU load %d/10, freq %d kHz, bandwidth %d/10", lv, f, b);
+    if (g_gp.dgpu) g_gp.dgpu(&g);
 }

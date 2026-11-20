@@ -7,7 +7,9 @@
 #include "gfx_vk.h"
 #include "nvn_mtl.h"
 #include <native_window/external_window.h>
+#include <dlfcn.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -34,11 +36,99 @@ static _Atomic int g_lost;                                          // the windo
 int dm_opengtx_init(const char *package, const char *app_version, int target_fps, int vulkan);
 void dm_opengtx_frame(uint64_t frames_presented);
 void dm_opengtx_shutdown(void);
+void dm_gameperf_sample(void);   // DM_GAMEPERF=1: read the GPU's real clock/load back (opengtx_ohos.c)
 static _Atomic uint32_t g_present_qos;
+
+// ---- XEngine spatial upscale (DM_VK_XEG_UPSCALE=1, default off) -------------------------------------------------
+// Replaces the present NEAREST blit with XEngine Kit's GPU upscale (XEG_spatial_upscale, libxengine.so, dlopen/dlsym:
+// the NDK ships no import library). The game's window texture stays its own size (BOTW: 1920x1080; DM_RENDER_SCALE
+// lowers the 3D views inside it, not the window), so this is the final window→screen upscale, letterbox kept through
+// the input/output regions. Structures and layouts as xeg_vulkan_spatial_upscale.h and its demo: no sType/pNext,
+// input SHADER_READ_ONLY_OPTIMAL and output COLOR_ATTACHMENT_OPTIMAL at the CmdRender call, both restored after.
+// Any refusal (library, symbols, extension, format mismatch, create failure) falls back to the blit, frame by frame.
+typedef struct { VkExtent2D inputSize; VkRect2D inputRegion; VkExtent2D outputSize; VkRect2D outputRegion; VkFormat format; float sharpness; } xeg_up_info;
+typedef struct { VkImageView inputImage; VkImageView outputImage; } xeg_up_desc;
+typedef void *xeg_up_t;   // VK_DEFINE_HANDLE(XEG_SpatialUpscale): an opaque pointer
+typedef VkResult (*PFN_xeg_create)(VkDevice, const xeg_up_info *, xeg_up_t *);
+typedef void (*PFN_xeg_cmd)(VkCommandBuffer, xeg_up_t, xeg_up_desc *);
+typedef void (*PFN_xeg_destroy)(xeg_up_t);
+typedef VkResult (*PFN_xeg_enum)(VkPhysicalDevice, uint32_t *, VkExtensionProperties *);
+static void barrier(VkCommandBuffer cb, VkImage img, VkImageLayout from, VkImageLayout to);
+static int xeg_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("DM_VK_XEG_UPSCALE"); on = e && atoi(e); } return on; }
+static struct {
+    int tried, ok, dead;
+    PFN_xeg_create create; PFN_xeg_cmd cmd; PFN_xeg_destroy destroy;
+    xeg_up_t up; xeg_up_info ci;   // the live object and the parameters it was created with (recreated when they change)
+    float sharp; uint64_t n;
+} g_xeg;
+static int g_swap_sampled;   // the live swapchain carries SAMPLED usage (XEG wants it on both images; the surface may refuse it)
+static VkImageView g_xeg_sv[8];   // per present slot: the window-image view of that slot's last XEG submit (the slot's fence is waited before reuse)
+_Static_assert(sizeof(xeg_up_info) == 56, "xeg_up_info: all members 4-byte aligned, no padding (memcmp compares it)");
+static int xeg_init(void) {
+    if (g_xeg.tried) return g_xeg.ok;
+    g_xeg.tried = 1;
+    const char *s = getenv("DM_VK_XEG_SHARP"); g_xeg.sharp = s ? (float)atof(s) : 0.25f;
+    if (!(g_xeg.sharp >= 0.0f)) g_xeg.sharp = 0.0f; if (g_xeg.sharp > 1.0f) g_xeg.sharp = 1.0f;
+    void *lib = dlopen("libxengine.so", RTLD_NOW | RTLD_LOCAL);   // kept open: the symbols stay in use
+    if (!lib) { VKLOG("XEG upscale: libxengine.so absent (%s)", dlerror()); return 0; }
+    g_xeg.create = (PFN_xeg_create)dlsym(lib, "HMS_XEG_CreateSpatialUpscale");
+    g_xeg.cmd = (PFN_xeg_cmd)dlsym(lib, "HMS_XEG_CmdRenderSpatialUpscale");
+    g_xeg.destroy = (PFN_xeg_destroy)dlsym(lib, "HMS_XEG_DestroySpatialUpscale");
+    PFN_xeg_enum en = (PFN_xeg_enum)dlsym(lib, "HMS_XEG_EnumerateDeviceExtensionProperties");
+    if (!g_xeg.create || !g_xeg.cmd || !g_xeg.destroy || !en) { VKLOG("XEG upscale: symbols missing in libxengine.so"); return 0; }
+    uint32_t n = 0; en(V.pd, &n, NULL);
+    int found = 0;
+    if (n && n < 64) { VkExtensionProperties *p = malloc(n * sizeof *p);
+        if (p && en(V.pd, &n, p) == VK_SUCCESS) for (uint32_t i = 0; i < n; i++) if (!strcmp(p[i].extensionName, "XEG_spatial_upscale")) found = 1;
+        free(p); }
+    if (!found) { VKLOG("XEG upscale: XEG_spatial_upscale not exposed (%u extensions)", n); return 0; }
+    g_xeg.ok = 1; VKLOG("XEG upscale: available (sharpness %.2f)", g_xeg.sharp);
+    return 1;
+}
+// Record the upscale instead of the blit. Called after the presented image was cleared in TRANSFER_DST; on success the
+// output is left in COLOR_ATTACHMENT (the caller barriers it to PRESENT_SRC) and the window image back in GENERAL.
+// On any refusal nothing was recorded and both images keep their layouts, so the caller's blit runs unchanged.
+static int xeg_record(VkCommandBuffer cb, vkimg_t *im, uint32_t idx, uint32_t slot, int cx, int cy, int cw, int ch, int dw, int dh, int dx, int dy) {
+    if (!xeg_on() || g_xeg.dead || !g_swap_sampled || !xeg_init()) return 0;
+    // XEG wants one format on both images, a plain single-sample 2D colour image, and SAMPLED|COLOR_ATTACHMENT usage
+    if (im->fmt != g_sfmt || im->aspect != VK_IMAGE_ASPECT_COLOR_BIT || im->samples != 1 || im->levels != 1 || im->layers != 1 || im->d != 1) return 0;
+    if (!(im->usage & VK_IMAGE_USAGE_SAMPLED_BIT) || !(im->usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)) return 0;
+    if (vk_window_bottom_up()) return 0;   // the regions cannot flip the picture; the blit does
+    if (cw <= 0 || ch <= 0 || dw <= 0 || dh <= 0 || cx < 0 || cy < 0 || dx < 0 || dy < 0) return 0;
+    if ((uint32_t)(cx + cw) > im->w || (uint32_t)(cy + ch) > im->h || (uint32_t)(dx + dw) > g_sext.width || (uint32_t)(dy + dh) > g_sext.height) return 0;
+    xeg_up_info ci = {{im->w, im->h}, {{cx, cy}, {(uint32_t)cw, (uint32_t)ch}}, {g_sext.width, g_sext.height}, {{dx, dy}, {(uint32_t)dw, (uint32_t)dh}}, g_sfmt, g_xeg.sharp};
+    // other slots' in-flight submits still reference the object: drain the queue before replacing it (a rare path —
+    // the parameters change only with the window size or the swapchain, not frame to frame)
+    if (g_xeg.up && memcmp(&ci, &g_xeg.ci, sizeof ci)) { vkDeviceWaitIdle(V.dev); g_xeg.destroy(g_xeg.up); g_xeg.up = NULL; }
+    if (!g_xeg.up) {
+        VkResult r = g_xeg.create(V.dev, &ci, &g_xeg.up);
+        if (r != VK_SUCCESS || !g_xeg.up) { g_xeg.up = NULL; g_xeg.dead = 1; VKLOG("XEG upscale: create failed (%d), fmt %d %ux%u → %ux%u — keeping the blit", r, g_sfmt, im->w, im->h, g_sext.width, g_sext.height); return 0; }
+        g_xeg.ci = ci;
+        VKLOG("XEG upscale: created %ux%u → %ux%u, region (%d,%d %dx%d) → (%d,%d %dx%d), fmt %d, sharpness %.2f",
+              im->w, im->h, g_sext.width, g_sext.height, cx, cy, cw, ch, dx, dy, dw, dh, g_sfmt, g_xeg.sharp);
+    }
+    // the slot's previous submit was fence-waited by present_window before this record: its view is safe to destroy.
+    // A view is a standalone object: destroying one whose image was already dropped (the texture cache frees images
+    // only after the GPU passed them) is valid — vkDestroyImageView asks only that submitted commands using it are done.
+    if (g_xeg_sv[slot]) { vkDestroyImageView(V.dev, g_xeg_sv[slot], NULL); g_xeg_sv[slot] = VK_NULL_HANDLE; }
+    VkImageViewCreateInfo vi = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, NULL, 0, im->img, VK_IMAGE_VIEW_TYPE_2D, im->fmt,
+                                {VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY},
+                                {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
+    if (vkCreateImageView(V.dev, &vi, NULL, &g_xeg_sv[slot])) { g_xeg_sv[slot] = VK_NULL_HANDLE; return 0; }
+    barrier(cb, g_simg[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    barrier(cb, im->img, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    xeg_up_desc d = {g_xeg_sv[slot], g_sview[idx]};
+    g_xeg.cmd(cb, g_xeg.up, &d);
+    barrier(cb, im->img, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);   // the game draws into it again next frame
+    if (++g_xeg.n % 600 == 1) VKLOG("XEG upscale: %llu frames upscaled", (unsigned long long)g_xeg.n);
+    return 1;
+}
 
 static void swap_destroy(void) {
     if (g_swap) { vkDeviceWaitIdle(V.dev); for (uint32_t i = 0; i < g_ni; i++) { if (g_sview[i]) vkDestroyImageView(V.dev, g_sview[i], NULL); g_sview[i] = VK_NULL_HANDLE; g_simg[i] = VK_NULL_HANDLE; }
+        for (uint32_t i = 0; i < 8; i++) { if (g_xeg_sv[i]) vkDestroyImageView(V.dev, g_xeg_sv[i], NULL); g_xeg_sv[i] = VK_NULL_HANDLE; }   // the queue is idle: every slot's XEG view is done
         vkDestroySwapchainKHR(V.dev, g_swap, NULL); g_swap = VK_NULL_HANDLE; g_ni = 0; }
+    g_swap_sampled = 0;
     if (g_surf) { vkDestroySurfaceKHR(V.inst, g_surf, NULL); g_surf = VK_NULL_HANDLE; }
     g_sext = (VkExtent2D){0, 0};
 }
@@ -99,6 +189,10 @@ static int swap_make(void) {
         swap_destroy(); return 0;
     }
     VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    // XEG's image requirements list SAMPLED on both images; ask for it on the swapchain only when the upscale is gated
+    // on and the surface allows it, so the default present path keeps exactly the usage it had
+    if (xeg_on() && (caps.supportedUsageFlags & VK_IMAGE_USAGE_SAMPLED_BIT)) usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+    g_swap_sampled = (usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0;
     VkSwapchainCreateInfoKHR sc = {VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR, NULL, 0, g_surf, n, g_sfmt, cs,
                                    g_sext, 1, usage,
                                    VK_SHARING_MODE_EXCLUSIVE, 0, NULL, tr, alpha, mode, VK_TRUE, VK_NULL_HANDLE};
@@ -174,20 +268,44 @@ static void barrier(VkCommandBuffer cb, VkImage img, VkImageLayout from, VkImage
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL, 1, &b);
 }
 
-// one frame's commands into cb: clear the presented image, blit the game's frame into it, hand it to the compositor
-static void record_frame(VkCommandBuffer cb, VkImage src, uint32_t idx, int cx, int cy, int cw, int ch, int dw, int dh, int dx, int dy) {
+// DM_VK_PASS_TIMES=1 / DM_VK_PROF=1: the present blit's own GPU time — a timestamp pair per slot (the core's g_tsq pattern: 2 queries a slot, reset and
+// written in the blit's command buffer). Read back only where the slot's fence has already been waited (present_window): no extra wait, no sync change.
+static VkQueryPool g_ptq; static int g_ptq_tried; static uint8_t g_pt_pend[8];   // pend: this slot's last submit carried a pair (a failed submit carries none)
+static double g_pt_ms; static uint32_t g_pt_n;
+static int present_ts_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("DM_VK_PASS_TIMES"), *p = getenv("DM_VK_PROF"); on = (e && atoi(e)) || (p && atoi(p)); } return on; }
+static void present_ts_setup(void) {   // once, on the first present that records: the pool lives as long as the device (as g_ppool)
+    if (g_ptq_tried) return; g_ptq_tried = 1;
+    if (!present_ts_on() || !V.props.limits.timestampComputeAndGraphics) return;
+    VkQueryPoolCreateInfo qi = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, NULL, 0, VK_QUERY_TYPE_TIMESTAMP, 2 * 8};
+    if (vkCreateQueryPool(V.dev, &qi, NULL, &g_ptq)) g_ptq = VK_NULL_HANDLE;   // refused (Maleoon): the blit goes untimed, as the core's g_pq
+}
+static void present_ts_read(uint32_t k) {   // the slot's fence was waited: its last blit's pair is complete. Non-blocking read, never a new wait
+    if (!g_ptq || !g_pt_pend[k]) return;
+    uint64_t t[2];
+    if (vkGetQueryPoolResults(V.dev, g_ptq, 2 * k, 2, sizeof t, t, 8, VK_QUERY_RESULT_64_BIT) != VK_SUCCESS || t[1] <= t[0]) return;
+    g_pt_pend[k] = 0; g_pt_ms += (double)(t[1] - t[0]) * V.props.limits.timestampPeriod / 1e6; g_pt_n++;
+}
+
+// one frame's commands into cb: clear the presented image, upscale the game's frame into it (XEG when gated on and
+// able, the NEAREST blit otherwise), hand it to the compositor
+static void record_frame(VkCommandBuffer cb, vkimg_t *im, uint32_t idx, uint32_t slot, int cx, int cy, int cw, int ch, int dw, int dh, int dx, int dy) {
+    VkImage src = im->img;
+    if (g_ptq) { vkCmdResetQueryPool(cb, g_ptq, 2 * slot, 2); vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g_ptq, 2 * slot); }
     vk_img_barrier_all(cb);   // after everything submitted before on this queue
     barrier(cb, g_simg[idx], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     VkClearColorValue black = {{0, 0, 0, 1}}; VkImageSubresourceRange rg = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     vkCmdClearColorImage(cb, g_simg[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &rg);
-    VkImageBlit b = {{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{cx, cy, 0}, {cx + cw, cy + ch, 1}}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{dx, dy, 0}, {dx + dw, dy + dh, 1}}};
-    if (vk_window_bottom_up()) { b.srcOffsets[0].y = cy + ch; b.srcOffsets[1].y = cy; }
-    // NEAREST, not LINEAR: this blit upscales the game's 1920x1080 window texture to the screen (2844x1260 here) every
-    // frame, and a linear-filtered upscale of that size is real work on the phone's tile renderer. Measured
-    // (2026-11-16): the present path's GPU time stayed at 18-20 ms even when the game rendered at half size, so the
-    // cost was this blit, not the scene. NEAREST is a plain sample copy; at 30 fps the price is a slightly harder
-    // edge on the upscale.
-    vkCmdBlitImage(cb, src, VK_IMAGE_LAYOUT_GENERAL, g_simg[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_NEAREST);
+    int xeg = xeg_record(cb, im, idx, slot, cx, cy, cw, ch, dw, dh, dx, dy);
+    if (!xeg) {
+        VkImageBlit b = {{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{cx, cy, 0}, {cx + cw, cy + ch, 1}}, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {{dx, dy, 0}, {dx + dw, dy + dh, 1}}};
+        if (vk_window_bottom_up()) { b.srcOffsets[0].y = cy + ch; b.srcOffsets[1].y = cy; }
+        // NEAREST, not LINEAR: this blit upscales the game's 1920x1080 window texture to the screen (2844x1260 here) every
+        // frame, and a linear-filtered upscale of that size is real work on the phone's tile renderer. Measured
+        // (2026-11-16): the present path's GPU time stayed at 18-20 ms even when the game rendered at half size, so the
+        // cost was this blit, not the scene. NEAREST is a plain sample copy; at 30 fps the price is a slightly harder
+        // edge on the upscale.
+        vkCmdBlitImage(cb, src, VK_IMAGE_LAYOUT_GENERAL, g_simg[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_NEAREST);
+    }
     if (g_sb && shot_on()) {   // the game's frame as the game left it, before anything of ours touches it
         barrier(cb, src, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         vkCmdFillBuffer(cb, g_sb, 0, (VkDeviceSize)g_shot_w * g_shot_h * 4, 0x5a5a5a5au);   // a copy that never ran leaves 0x5a behind, not a frame of zeros
@@ -196,7 +314,8 @@ static void record_frame(VkCommandBuffer cb, VkImage src, uint32_t idx, int cx, 
         vkCmdCopyImageToBuffer(cb, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, g_sb, 1, &rc);
         barrier(cb, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
     }
-    barrier(cb, g_simg[idx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    barrier(cb, g_simg[idx], xeg ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    if (g_ptq) vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g_ptq, 2 * slot + 1);
 }
 
 // one frame: the game's window texture into the swapchain image, letterboxed, then present
@@ -217,7 +336,10 @@ static void present_window(vkimg_t *im, const int crop[4]) {
     struct timespec t0; clock_gettime(CLOCK_MONOTONIC, &t0);
     int cx = crop ? crop[0] : 0, cy = crop ? crop[1] : 0, cw = crop && crop[2] ? crop[2] : (int)im->w, ch = crop && crop[3] ? crop[3] : (int)im->h;
     uint32_t k = g_pi++ % 8;
-    if (vkWaitForFences(V.dev, 1, &g_pfence[k], VK_TRUE, PRESENT_WAIT_NS) == VK_TIMEOUT) return;   // the previous blit into this slot is still in flight
+    VkResult fw = vkWaitForFences(V.dev, 1, &g_pfence[k], VK_TRUE, PRESENT_WAIT_NS);
+    if (fw == VK_TIMEOUT) return;   // the previous blit into this slot is still in flight
+    if (fw == VK_SUCCESS) { present_ts_read(k);   // the slot's last blit is done: take its GPU span here, where the fence was waited anyway
+        if (g_pt_n && g_shot_total % 600 == 0) { VKLOG("present blit GPU %.2f ms avg (%u blits)", g_pt_ms / g_pt_n, g_pt_n); g_pt_ms = 0; g_pt_n = 0; } }
     VkFormat want = (im->fmt == VK_FORMAT_R8G8B8A8_SRGB || im->fmt == VK_FORMAT_B8G8R8A8_SRGB || im->fmt == VK_FORMAT_A8B8G8R8_SRGB_PACK32) ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
     if (want != g_want) { g_want = want; swap_destroy(); if (!swap_make()) return; }
     double s = fmin((double)g_sext.width / cw, (double)g_sext.height / ch);
@@ -243,11 +365,12 @@ static void present_window(vkimg_t *im, const int crop[4]) {
     }
     vkResetFences(V.dev, 1, &g_pfence[k]);
     if (shot_on()) shot_setup((int)im->w, (int)im->h);
+    present_ts_setup();
     VkCommandBuffer cb = g_pcb[k];
     VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, NULL, VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     if (dbg < 4) VKLOG("step %d: begin", dbg);
     vkBeginCommandBuffer(cb, &bi);
-    record_frame(cb, im->img, idx, cx, cy, cw, ch, dw, dh, dx, dy);
+    record_frame(cb, im, idx, k, cx, cy, cw, ch, dw, dh, dx, dy);
     vkEndCommandBuffer(cb);
     if (dbg < 4) VKLOG("step %d: recorded", dbg);
     VkPipelineStageFlags ws = VK_PIPELINE_STAGE_TRANSFER_BIT;
@@ -262,6 +385,7 @@ static void present_window(vkimg_t *im, const int crop[4]) {
         vkQueueSubmit(V.q, 1, &fix, g_pfence[k]);
         pthread_mutex_unlock(&g_vk_queue_mu); VKRED_ONCE(76, "present submit failed"); swap_destroy(); atomic_store(&g_lost, 1); return;
     }
+    if (g_ptq) g_pt_pend[k] = 1;   // the blit (with its timestamp pair) is on the queue; the failed-submit path above carries none
     VkPresentInfoKHR pi = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, NULL, 1, &g_done_sem[k], 1, &g_swap, &idx, NULL};
     double sub_ms = ms_since(&tq);
     if (dbg < 6) VKLOG("present step %d: submitted", dbg);
@@ -426,6 +550,7 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4], uint64_t 
       static uint64_t last_exec; uint64_t ex = vk_replay_ns(), rp = ex - last_exec; last_exec = ex;
       double g = vk_gpu_ms_recent(); dm_perf_frame_cost((int64_t)rp, g > 0 ? (int64_t)(g * 1e6) : 0); }
     dm_perf_frame(period);
+    dm_gameperf_sample();   // throttled to 3 s inside; verifies the LTPO hint actually raised the GPU clock
     uint64_t n = ++g_presents;
     vkimg_t *im = vk_tex(t);
     const char *pt = getenv("DM_VK_PRESENT_TID");   // debug: bypass the game's final fragment and present a registered source directly
