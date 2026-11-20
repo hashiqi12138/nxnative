@@ -75,6 +75,20 @@ class Registry {
         // the same pack, refreshed: keep its progress and state, update the server's numbers
         known.pack = p;
         if (known.total === 0) known.total = p.bytes;
+        // an update: the server's stamp no longer matches what is installed. Without this the state stayed
+        // Installed and start() returned at once, so the download button did nothing on a new pack (measured).
+        // Reset to Idle so the update downloads; drop any stale .part so a resume cannot mix the old pack's bytes.
+        const installedStamp: string = this.filesDir.length > 0
+          ? readStamp(gamesDir(this.filesDir) + '/' + p.title) : '';
+        if (known.state !== PackState.Downloading && known.state !== PackState.Importing
+          && installedStamp !== p.stamp) {
+          try { fs.unlinkSync(this.tmpPath(p)); } catch (e) { }
+          known.state = PackState.Idle;
+          known.got = 0;
+          known.total = p.bytes;
+          known.speed = 0;
+          known.note = '';
+        }
         out.push(known);
       } else {
         const installed: boolean = this.filesDir.length > 0

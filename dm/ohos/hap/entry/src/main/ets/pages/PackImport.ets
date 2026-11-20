@@ -107,9 +107,33 @@ function tarOctal(h: Uint8Array, off: number, len: number): number {
  */
 export async function importPack(path: string, root: string, info: PackInfo,
                                  onProgress: (p: ImportProgress) => void): Promise<number> {
-  // clear the owned set (same rule as the HAP staging path)
+  // Clear only the owned folders the pack actually carries. A full pack has RomFS/mods/aoc and replaces them; an
+  // incremental pack (e.g. only shaders.dmsv) must NOT wipe the rest — wiping RomFS for a shader-only update left the
+  // game incomplete (measured). Scan the tar headers first (seek over the data, no read) to see which top-level dirs appear.
+  const BLOCK0: number = 512;
+  const present = new Set<string>();
+  {
+    const scan = fs.openSync(path, fs.OpenMode.READ_ONLY);
+    const hb = new ArrayBuffer(BLOCK0);
+    const hb8 = new Uint8Array(hb);
+    let p = HEADER_SIZE;
+    while (p - HEADER_SIZE < info.tarSize) {
+      const got = fs.readSync(scan.fd, hb, { offset: p, length: BLOCK0 });
+      if (got !== BLOCK0) break;
+      let zero = true;
+      for (let i = 0; i < BLOCK0; i++) { if (hb8[i] !== 0) { zero = false; break; } }
+      if (zero) break;
+      const nm = tarString(hb8, 0, 100);
+      const pf = tarString(hb8, 345, 155);
+      const full = pf.length ? pf + '/' + nm : nm;
+      present.add(full.split('/')[0]);
+      const sz = tarOctal(hb8, 124, 12);
+      p += BLOCK0 + sz + ((BLOCK0 - (sz % BLOCK0)) % BLOCK0);
+    }
+    fs.closeSync(scan);
+  }
   for (const owned of ['mods', 'RomFS', 'aoc']) {
-    removeTree(root + '/' + owned);
+    if (present.has(owned)) removeTree(root + '/' + owned);
   }
   try {
     fs.mkdirSync(root, true);
