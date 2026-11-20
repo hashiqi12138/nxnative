@@ -10,6 +10,9 @@ from pathlib import Path
 DM = Path(__file__).resolve().parent.parent          # dm/
 ap = argparse.ArgumentParser()
 ap.add_argument('--game', required=True)
+# P4.1: builtin writes the profile's constants into the binary (Mac/iOS and the OHOS fallback); runtime writes the table the
+# host fills from the pack's profile.tsv, so one library runs every game. The two build into separate output folders.
+ap.add_argument('--profile', default='builtin', choices=('builtin', 'runtime'))
 ap.add_argument('--sdk', default=os.environ.get('OHOS_SDK'))
 ap.add_argument('--out')
 ap.add_argument('--jobs', type=int, default=os.cpu_count() or 8)
@@ -47,12 +50,15 @@ if not sdk:
 sdk = sdk.resolve(); bin_ = sdk / 'native/llvm/bin'
 CC = str(bin_ / ('clang.exe' if os.name == 'nt' else 'clang')); SYSROOT = str(sdk / 'native/sysroot')
 TARGET = '--target=aarch64-linux-ohos'
-out = Path(a.out) if a.out else DM / 'ohos/out' / (a.game + ('-release' if a.release else ''))
+out = Path(a.out) if a.out else DM / 'ohos/out' / (a.game + ('-release' if a.release else '') + ('-rt' if a.profile == 'runtime' else ''))
 DBG = [] if a.release else ['-g']
 obj = out / 'obj'; gen = out / 'gen'; obj.mkdir(parents=True, exist_ok=True); (gen / a.game).mkdir(parents=True, exist_ok=True)
 
 # ---- generated headers ---------------------------------------------------------------------------------------------------------------------
-subprocess.run([sys.executable, str(DM / 'games/game.py'), 'header', a.game, str(gen / a.game / 'game_profile.h')], check=True)
+subprocess.run([sys.executable, str(DM / 'games/game.py'), 'header', a.game, str(gen / a.game / 'game_profile.h')]
+               + (['--runtime'] if a.profile == 'runtime' else []), check=True)
+if a.profile == 'runtime':   # the rows a pack carries; kept beside the library so a device test can push it
+    subprocess.run([sys.executable, str(DM / 'games/game.py'), 'profile', a.game, str(out / 'profile.tsv')], check=True)
 
 # the backend's own small shaders (dm/gfx/vk/shaders): glslc (a Vulkan SDK's, or $GLSLC) → gen/<game>/<name>_<stage>.spv.h
 def find_glslc():

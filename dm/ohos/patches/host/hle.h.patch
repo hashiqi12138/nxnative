@@ -1,7 +1,6 @@
-diff --git a/host/hle.h b/host/hle.h
 --- a/host/hle.h
 +++ b/host/hle.h
-@@ -53,10 +53,10 @@ typedef struct { const char *name; void *fn; const char *why; const char *to; }
+@@ -55,10 +55,10 @@
      _Static_assert(HLE_NARG(__VA_ARGS__) <= 16, #cname ": more parameters than the big-stack entry carries over (hle.h)"); \
      static ret cname(__VA_ARGS__) __attribute__((used));                                          \
      extern const char cname##_bs[];                                                               \

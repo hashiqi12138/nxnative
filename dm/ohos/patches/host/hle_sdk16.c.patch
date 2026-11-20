@@ -1,0 +1,23 @@
+--- a/host/hle_sdk16.c
++++ b/host/hle_sdk16.c
+@@ -140,12 +140,14 @@
+ static size_t font_skip(void) {
+     static int skip = -1;
+     if (skip < 0) {
+-#ifdef DM_GAME_SHARED_FONT_TTF
+-        skip = DM_GAME_SHARED_FONT_TTF ? 8 : 0; LOG("shared font: %s (game profile shared_font)", skip ? "the TTF itself" : "BFTTF header + TTF");
+-#else
+-        int m = dm_sdk_major(), dec = dm_game_imports("_ZN2nn6fontll24ScalableFontEngineHelper6Decode"); skip = DM_SDK_OLD(m) || !dec ? 8 : 0;
+-        LOG("shared font: %s (SDK %d, main %s ScalableFontEngineHelper::Decode)", skip ? "the TTF itself" : "BFTTF header + TTF", m, dec ? "imports" : "does not import");
+-#endif
++        // DM_GAME_HAS_SHARED_FONT rather than #ifdef: a runtime host reads the profile at start-up (OHOS P4.1), a builtin one
++        // still gets a literal 0/1 here, so both take the same branch their profile asks for.
++        if (DM_GAME_HAS_SHARED_FONT) {
++            skip = DM_GAME_SHARED_FONT_TTF ? 8 : 0; LOG("shared font: %s (game profile shared_font)", skip ? "the TTF itself" : "BFTTF header + TTF");
++        } else {
++            int m = dm_sdk_major(), dec = dm_game_imports("_ZN2nn6fontll24ScalableFontEngineHelper6Decode"); skip = DM_SDK_OLD(m) || !dec ? 8 : 0;
++            LOG("shared font: %s (SDK %d, main %s ScalableFontEngineHelper::Decode)", skip ? "the TTF itself" : "BFTTF header + TTF", m, dec ? "imports" : "does not import");
++        }
+     }
+     return (size_t)skip;
+ }

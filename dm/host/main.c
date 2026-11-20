@@ -57,8 +57,9 @@ static uint64_t proc_start_mono_ns(void) {
     return age > 0 ? mono - (uint64_t)age : mono;
 }
 
-#ifdef DM_GAME_MULTI
+#if defined(DM_GAME_MULTI) && !defined(DM_GAME_RT)
 // A host over the programs of a multi-program application (game.py header_multi): the profile of the program DM_PROGRAM names, program 0 without it. One run is one program (hle_oe.c)
+// A runtime host's table is filled from the pack (OHOS P4.1): game_profile_rt.c owns dm_game_cur there.
 const dm_game_t *dm_game_cur(void) {
     static const dm_game_t *g;
     if (!g) {
@@ -103,6 +104,16 @@ static void host_preload(int argc, char **argv) {
     flags_init();
     { void dm_diag_samplers_start(void); dm_diag_samplers_start(); }   // DM_MEMSTAT / DM_THRCPU (memstat.m): after the iOS front end has set the env files' switches
     if (argc < 2) die("usage: dmhost <dir> [mod...] [-- game arguments...]");
+#ifdef DM_GAME_RT
+    // OHOS P4.1: a runtime host's constants come from the pack's profile. Loaded before anything host-side reads a DM_GAME_*
+    // value (the modules below, the memory partition further on); a missing or refused profile stops the start.
+    {
+        char pp[1200]; snprintf(pp, sizeof pp, "%s/profile.tsv", argv[1]);
+        if (game_profile_load(pp)) die("[RED] game profile missing or refused: %s", pp);
+        const char *slash = strrchr(argv[1], '/'), *want = slash ? slash + 1 : argv[1];
+        if (strcasecmp(want, dm_game_cur()->id)) LOG("[RED] game profile: title id %s but the folder is %s (continuing)", dm_game_cur()->id, want);
+    }
+#endif
     // Time zone: a game gets local time from nn::time (ToCalendarTime / ToPosixTime, hle_time.c), which converts with the host's zone, so its screens show this machine's time.
     // The guest C library's localtime / mktime stay UTC, as on a Switch. Only deterministic comparison (DM_FIXED_TIME) pins the host to UTC: the same replay must convert to the same
     // calendar time on this machine (UTC+8) and on the second Mac (UTC+9)

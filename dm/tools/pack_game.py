@@ -62,10 +62,27 @@ def read_header(f):
     return {'version': ver, 'title': title, 'stamp': stamp, 'tar_size': tar_size}
 
 
-def ensure_manifest(pack):
-    """dm.files.tsv in the pack dir, or None when it cannot be produced (the stamp then falls back to a tar hash)."""
+def write_profile(pack, title):
+    """P4.1: the runtime host's constants for this pack — game.py profile's rows from dm/games/<title>/game.tsv.
+    Returns the path, or None when the title has no profile (a builtin host still runs the pack)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    gamepy = os.path.join(os.path.dirname(here), 'games', 'game.py')
+    if not os.path.isfile(gamepy):
+        return None
+    dst = os.path.join(pack, 'profile.tsv')
+    rc = subprocess.run([sys.executable, gamepy, 'profile', title, dst])
+    if rc.returncode != 0:
+        print('pack_game: %s has no game profile; the pack carries no profile.tsv (a builtin host still runs it)' % title)
+        return None
+    print('pack_game: profile.tsv from dm/games/%s/game.tsv' % title)
+    return dst
+
+
+def ensure_manifest(pack, force=False):
+    """dm.files.tsv in the pack dir, or None when it cannot be produced (the stamp then falls back to a tar hash).
+    force: regenerate it, so a file this run added (profile.tsv) takes part in the stamp."""
     man = os.path.join(pack, 'dm.files.tsv')
-    if os.path.isfile(man):
+    if os.path.isfile(man) and not force:
         return man
     here = os.path.dirname(os.path.abspath(__file__))
     gen = os.path.join(here, 'gen_pack_manifest.py')
@@ -89,7 +106,7 @@ def build(pack, title, out):
         raise SystemExit('pack_game: no such pack dir: %s' % pack)
     if not os.path.isfile(os.path.join(pack, 'nx2a-data.json')):
         raise SystemExit('pack_game: %s has no nx2a-data.json - point --pack at the porter data pack folder' % pack)
-    man = ensure_manifest(pack)
+    man = ensure_manifest(pack, force=write_profile(pack, title) is not None)
     stamp = manifest_stamp(man) if man else ''
     if not stamp:
         # no manifest: stamp the pack contents' own shape so the app still has a change detector

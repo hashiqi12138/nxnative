@@ -118,6 +118,13 @@ int nvn_dirty_defrag(int (*remap_ro)(void *, size_t)) { (void)remap_ro; return 0
 // ---- host front end / movie / debug hooks ----
 int front_ctrl_support(int min, int max) { (void)min; (void)max; return 0; }   // no controller applet on OHOS
 int mavc_bt709(const mavc *a, int h) { (void)a; (void)h; return 0; }            // AVC decoder is M2/M3 work; hle_movie.c gets no BT.709 hint
+// Upstream's post-first-use question for a registered texture (nvn_ft_poll): the Metal backend answers from its storage copy.
+// The Vulkan backend keeps textures in its own cache and re-uploads a CPU-written one itself, so "left to the GPU until the CPU
+// rewrites it" is the answer that changes nothing here.
+int mtl_tex_cpu_rewritten(const tex_t *t) { (void)t; return MTL_REWRITE_GPU_NOW; }
+// The display link's pacing mode (120 fps following the screen): a Metal-only pacer. The OHOS present is FIFO-paced instead,
+// so the mode is accepted and ignored.
+void mtl_link_mode_set(int mode) { (void)mode; }
 void dm_gfx_restop(void) {}
 void dm_gfx_bufsnap(const char *key, uint64_t a, size_t n, const char *path) { (void)key; (void)a; (void)n; (void)path; }
 

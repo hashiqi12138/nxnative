@@ -1,0 +1,13 @@
+--- a/host/hle_cheats.c
++++ b/host/hle_cheats.c
+@@ -1734,7 +1734,9 @@
+ #ifdef DM_GAME_DISPLAY_VERSIONS
+     const struct { const char *build, *ver; } k[] = {DM_GAME_DISPLAY_VERSIONS};
+     const char *bid = dm_main_build();
+-    for (unsigned j = 0; j < sizeof k / sizeof *k; j++) if (k[j].build && !strcasecmp(bid, k[j].build)) snprintf(g_version, sizeof g_version, "%s", k[j].ver);
++    // The row count, not sizeof: a runtime host's table is a fixed bound with NULL padding (OHOS P4.1); a builtin one gets its
++    // own literal here.
++    for (unsigned j = 0; j < (unsigned)DM_GAME_NVERSIONS; j++) if (k[j].build && !strcasecmp(bid, k[j].build)) snprintf(g_version, sizeof g_version, "%s", k[j].ver);
+ #endif
+ }
+ 
