@@ -33,3 +33,52 @@ This fork carries the upstream's `docs/` and `.github/` trees. They describe the
   `scripts/` joined them the same day); a merge conflict inside any of them resolves to the **upstream** side,
   since we do not edit the upstream's own copies from this fork. This port's edits to a shared file live in
   `dm/ohos/patches/` instead, and must carry an `OHOS` marker for the export to queue them.
+
+## OHOS device deployment: lib in the HAP, game data in a pack pulled over HTTP
+
+The OHOS port splits what ships into two independent pieces. **Do not pack game data into the HAP** (`mkhap.py
+--data`, the rawfile/dm route, is the old path): the current method is a data pack the device pulls from a PC
+download service.
+
+- **Host code** (`libdmhost.so`) ships in the HAP entry. Build it with `dm/ohos/build_ohos.py --lib --game <id>`,
+  then `python dm/ohos/mkhap.py --game <id> --lib dm/ohos/out/<id>/libdmhost.so --out <dir>` (a lib-only HAP, no
+  `--data`). Install: `hdc file send <dir>/dmhost-signed.hap /data/local/tmp/nx2a-e/entry-default-signed.hap` then
+  `hdc shell 'bm install -p /data/local/tmp/nx2a-e -r -w 600'`. A lib-only install leaves the staged game data
+  untouched, so a host change never re-copies gigabytes.
+- **Game data** (RomFS/, mods/, `shaders.dmsv`, env.txt, nx2a-data.json) ships as one `.nxpk` pack: an 80-byte
+  `NXPK` header (magic + version + title ID + stamp + tar size) framing a standard ustar tar. Build it with
+  `python dm/tools/pack_game.py --pack <porter pack dir> --title <id> --out <file>.nxpk` (the pack dir must hold
+  `nx2a-data.json`; `dm.files.tsv` is generated if absent). The **stamp** is the sha1 `gen_pack_manifest.py`
+  computes over `dm.files.tsv`'s (rel, size, mtime_ns) rows; it is the contract that makes data independent of the
+  app. Change `shaders.dmsv` (or any file) and the stamp changes.
+- **Why HTTP, not hdc push**: the SELinux boundary blocks both directions — the shell domain cannot write the app
+  sandbox (`debug_hap_data_file`), and the app cannot read the shell's `/data/local/tmp` (both measured on the
+  device). The pack therefore travels over HTTP: the PC serves it and the app pulls it into its own sandbox, the
+  only writer that can cross the boundary. `hdc file send`/`recv` to the sandbox path returns *Permission denied*.
+- **Download service**: `python dm/tools/pack_server.py --pack <pack dir> --nxpk <file.nxpk>
+  [--games-dir <folder of .nxpk>] [--port 28899] [--bind 0.0.0.0]`. Endpoints: `/ping` (PONG), `/list` (JSON of
+  the packs it holds: title/name/bytes/stamp/url), `/pack.nxpk` (the `--nxpk` container as one stream),
+  `/packs/<file>.nxpk` (one container out of `--games-dir`), `/stamp` (the 80-byte header alone, so the app checks
+  before pulling gigabytes), `/dm.files.tsv` and `/<path>` (legacy per-file path). HTTP/1.1, `Range` resume (206),
+  handler timeout 3600 s. Two ways for the device to reach it: over the LAN with `--bind 0.0.0.0` (the app's
+  library source points at `http://<this machine>:28899`), or over `hdc rport tcp:28899 tcp:28899` with the server
+  bound to 127.0.0.1 (the device's 127.0.0.1:28899 reaches it).
+- **App side**: Settings stores the library source (`library_source` in the app-wide `library` store;
+  `normalizeSource` turns a bare `192.168.1.10` into `http://192.168.1.10:28899`). The library's remote section
+  (`RemoteLibrary.ets`) reads `/list`, and `RemoteDownloads.ets` (a module-level singleton that outlives the page)
+  streams the chosen pack's url into the cache dir as a `.part` with `Range` resume, then `PackImport.importPack`
+  streams the tar into `<filesDir>/games/<id>/` and writes `.stamp`. **Equal stamps skip the import entirely**;
+  a different stamp re-imports. `importPack` removes only the owned folders (`mods`/`RomFS`/`aoc`) that the pack
+  actually carries (it pre-scans the tar headers), so a **full pack** replaces the whole tree while an
+  **incremental pack** (e.g. a tar of just `shaders.dmsv`, header stamp = the full updated tree's stamp) updates
+  that one file without wiping RomFS — the fast path for a shader-bundle A/B. (Before this merge rule, importPack
+  wiped all three folders unconditionally, so a shaders-only pack deleted RomFS and left the game *incomplete*.)
+  Killing the app stops a download; the `.part` resumes next time. `RemoteDownloads.setPacks` resets a known pack
+  to Idle when the server stamp no longer matches the installed `.stamp` (otherwise the download button did
+  nothing on an update).
+
+Typical **shader-bundle swap** (e.g. an A/B between a fixed-slot bundle and a bindless pool bundle): rebuild the
+pack dir's `shaders.dmsv`, `pack_game.py` a new `.nxpk` (new stamp), serve it with `pack_server.py`, and let the app
+download + import it; the host lib stays as installed. A **host-code change** is the lib-only HAP route above. The
+two are independent: a new entry HAP never touches the data, and a new pack never touches the lib. Verify a deploy
+in hilog: `shader bundle <path>: <n> shaders` and, for a bindless pool bundle, `bindless pools: set 4 made`.
