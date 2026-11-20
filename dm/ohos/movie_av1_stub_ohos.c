@@ -3,7 +3,7 @@
 // every decode reports "refused" (-1), so a game falls back as it does when no decoder is present.
 #include "../host/hle_movie_av1.h"
 
-mav1 *mav1_new(void) { return NULL; }
+mav1 *mav1_new(struct movie_vt_control *control) { (void)control; return NULL; }
 void mav1_free(mav1 *a) { (void)a; }
 void mav1_reset(mav1 *a) { (void)a; }
 int mav1_decode(mav1 *a, const uint8_t *data, size_t n, int64_t ts, mav1_picture *out) { (void)a; (void)data; (void)n; (void)ts; (void)out; return -1; }

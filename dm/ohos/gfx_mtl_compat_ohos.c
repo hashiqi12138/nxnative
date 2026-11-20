@@ -63,6 +63,12 @@ void mtl_tex_linear_cpu_written(const tex_t *t) { (void)t; }
 void mtl_prog_unpin(prog_t *p) { (void)p; }
 // the queue rebinds the record to this job-owned copy (nvn_queue.inc); without the struct copy replay sees a zeroed prog_t and skips every draw. Vulkan resolves shaders by key, so no Metal library pinning
 void mtl_prog_snapshot(prog_t *copy, const prog_t *source) { *copy = *source; }
+// Streaming submissions (upstream nvn_queue.inc nvn_queue_submit): the Metal backend publishes a job before its remaining recording
+// is copied, so the worker replays closed nodes while the game thread still records. The Vulkan replay fills one command buffer per
+// submission serially, so streaming stays off and the job is enqueued when recording ends - the path this port already uses.
+int mtl_sub_stream_on(void) { return 0; }
+// Reached only for a job already open for streaming (j->open), which never happens here; the snapshot itself is the same copy.
+void mtl_prog_snapshot_pin(prog_t *copy, const prog_t *source) { *copy = *source; }
 void mtl_prog_prefetch(const prog_t *p) { (void)p; }
 void mtl_prog_forget(const prog_t *p) { (void)p; }
 

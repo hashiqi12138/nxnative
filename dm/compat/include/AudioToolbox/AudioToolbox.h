@@ -53,6 +53,39 @@ typedef UInt32 AudioDeviceID;
 #define kAudioDevicePropertyBufferFrameSizeRange 0x6673726E   /* 'fsrn' */
 typedef struct { Float64 mMinimum, mMaximum; } AudioValueRange;
 
+// CoreAudio device objects (upstream's Mac-only device enumeration: hle_audio.c env_out_device / out_device / device_out_channels /
+// route_listen, and the DM_AUDIO_DEVICE switch). OHOS has no such object: every query reports failure, so the callers see no device
+// and keep the system output (the shipped Android port behaves the same way). The listeners are accepted and never fire.
+#include <CoreFoundation/CoreFoundation.h>
+typedef struct { UInt32 mSelector, mScope, mElement; } AudioObjectPropertyAddress;
+typedef UInt32 AudioObjectID;
+typedef OSStatus (*AudioObjectPropertyListenerProc)(AudioObjectID obj, UInt32 n, const AudioObjectPropertyAddress *pa, void *data);
+#define kAudioObjectSystemObject 1u
+#define kAudioHardwarePropertyDevices 0x64657623u        /* 'dev#' */
+#define kAudioHardwarePropertyDefaultOutputDevice 0x644F7574u /* 'dOut' */
+#define kAudioObjectPropertyName 0x6C6E616Du             /* 'lnam' */
+#define kAudioObjectPropertyScopeGlobal 0x676C6F62u      /* 'glob' */
+#define kAudioObjectPropertyScopeOutput 0x6F757470u      /* 'outp' */
+#define kAudioObjectPropertyElementMain 0u
+#define kAudioDevicePropertyStreamFormat 0x73666D74u     /* 'sfmt' */
+// The six-channel input layout (hle_audio.c au_set_layout6). The OHOS unit mixes its own way; setting it is a hint that may be refused,
+// which the caller logs and continues from.
+typedef struct { UInt32 mChannelLayoutTag, mChannelBitmap, mNumberChannelDescriptions; } AudioChannelLayout;
+#define kAudioChannelLayoutTag_MPEG_5_1_A 0x00650006u     /* (101 << 16) | 6, as Apple defines it */
+#define kAudioUnitProperty_AudioChannelLayout 19
+static inline OSStatus AudioObjectGetPropertyDataSize(AudioObjectID o, const AudioObjectPropertyAddress *pa, UInt32 q, const void *qd, UInt32 *size) {
+    (void)o; (void)pa; (void)q; (void)qd; (void)size; return -1;
+}
+static inline OSStatus AudioObjectGetPropertyData(AudioObjectID o, const AudioObjectPropertyAddress *pa, UInt32 q, const void *qd, UInt32 *size, void *data) {
+    (void)o; (void)pa; (void)q; (void)qd; (void)size; (void)data; return -1;
+}
+static inline OSStatus AudioObjectAddPropertyListener(AudioObjectID o, const AudioObjectPropertyAddress *pa, AudioObjectPropertyListenerProc proc, void *data) {
+    (void)o; (void)pa; (void)proc; (void)data; return -1;
+}
+static inline OSStatus AudioObjectRemovePropertyListener(AudioObjectID o, const AudioObjectPropertyAddress *pa, AudioObjectPropertyListenerProc proc, void *data) {
+    (void)o; (void)pa; (void)proc; (void)data; return -1;
+}
+
 typedef struct dm_audio_unit *AudioUnit, *AudioComponentInstance;
 typedef struct dm_audio_component *AudioComponent;
 typedef OSStatus (*AURenderCallback)(void *ref, AudioUnitRenderActionFlags *flags, const AudioTimeStamp *ts, UInt32 bus, UInt32 frames, AudioBufferList *data);

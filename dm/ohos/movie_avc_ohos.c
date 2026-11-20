@@ -6,7 +6,7 @@
 #include "hle_movie_avc.h"
 
 struct mavc { int unused; };
-mavc *mavc_new(void) { return calloc(1, sizeof(mavc)); }
+mavc *mavc_new(struct movie_vt_control *control) { (void)control; return calloc(1, sizeof(mavc)); }
 void mavc_free(mavc *a) { free(a); }
 void mavc_param_sets(mavc *a, const uint8_t *p, size_t n) { (void)a; (void)p; (void)n; }
 void mavc_avcc(mavc *a, const uint8_t *p, size_t n) { (void)a; (void)p; (void)n; }
@@ -15,5 +15,6 @@ int mavc_take(mavc *a, int flush, uint8_t *nv12, int w, int h, int64_t *pts_us) 
 int mavc_queued(const mavc *a) { (void)a; return 0; }
 int mavc_held(const mavc *a) { (void)a; return 0; }
 int mavc_ready(const mavc *a) { (void)a; return 0; }   // no decoder yet: nothing can come out without a flush
+// mavc_bt709 lives in gfx_mtl_compat_ohos.c with the other movie hooks: one definition.
 void mavc_set_rgba(mavc *a) { (void)a; }
 void mavc_drop(mavc *a) { (void)a; }

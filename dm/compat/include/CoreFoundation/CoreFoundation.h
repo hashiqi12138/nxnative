@@ -32,3 +32,5 @@ static inline int CFURLCopyResourcePropertyForKey(CFURLRef u, CFStringRef key, C
 static inline unsigned long CFNumberGetTypeID(void) { return 0; }
 static inline int CFNumberGetValue(CFNumberRef n, int type, void *out) { (void)n; (void)type; (void)out; return 0; }
 static inline void CFRelease(CFTypeRef v) { (void)v; }
+// VideoToolbox's history keeps a retained reference (hle_movie_vt.h). Nothing is reference counted here, so retaining is the identity.
+static inline CFTypeRef CFRetain(CFTypeRef v) { return v; }
