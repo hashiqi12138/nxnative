@@ -103,6 +103,10 @@ void dm_ohos_game_start(const char *root, const char *save, const char *temp) {
     }
     mkdirs(temp); setenv("DM_TEMP", temp, 1);
     snprintf(g_buf[1], sizeof g_buf[1], "%s/shaders.dmsv", root); setenv("DM_VK_SHADERS", g_buf[1], 1);
+    // OHOS is a product that must have sound, as iOS: default to the real OHAudio renderer rather than the silent sink.
+    // hle_audio.c's real_audio() defaults to TARGET_OS_IPHONE (0 here), so without this every output is silent. Set before
+    // env.txt with no overwrite, so a pack may still choose DM_AUDIO=0 (tests / replay).
+    setenv("DM_AUDIO", "1", 0);
     snprintf(g_buf[2], sizeof g_buf[2], "%s/env.txt", root); env_file(g_buf[2]);
     // Crash reports and guest-thread dumps use stderr directly (unlike LOG, which goes to hilog): keep them beside the pack as Android does.
     snprintf(g_buf[2], sizeof g_buf[2], "%s/log.txt", root);
