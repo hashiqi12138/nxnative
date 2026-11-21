@@ -469,6 +469,7 @@ static struct { vkimg_t *im; int crop[4], has_crop; uint64_t n; } g_pq[PQ_N];
 static uint64_t g_pq_head, g_pq_tail, g_pq_done;
 static pthread_mutex_t g_pq_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_pq_cv = PTHREAD_COND_INITIALIZER;
 static _Atomic int g_redraw;
+static _Atomic int g_present_suspended;   // dm_gfx_suspend: the graphics gate is closed, stop putting frames on screen
 void dm_overlay_redraw(void) { atomic_store(&g_redraw, 1); pthread_mutex_lock(&g_pq_mu); pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu); }
 static void *present_thread(void *arg) {
     (void)arg; pthread_setname_np(pthread_self(), "vk present");
@@ -494,7 +495,8 @@ int rc = OH_QoS_SetThreadQoS(QOS_USER_INTERACTIVE);
         }
         typeof(g_pq[0]) e = g_pq[g_pq_tail % PQ_N];
         pthread_mutex_unlock(&g_pq_mu);
-        if (e.im) { last = e; pthread_mutex_lock(&g_present_mu); if (swap_make()) present_window(e.im, e.has_crop ? e.crop : NULL); pthread_mutex_unlock(&g_present_mu); }
+        // While the graphics gate is closed (dm_gfx_suspend) consume the frame so acquire waits release, but put nothing on screen.
+        if (e.im && !atomic_load(&g_present_suspended)) { last = e; pthread_mutex_lock(&g_present_mu); if (swap_make()) present_window(e.im, e.has_crop ? e.crop : NULL); pthread_mutex_unlock(&g_present_mu); }
         pthread_mutex_lock(&g_pq_mu); g_pq_tail++; g_pq_done = e.n; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
     }
     return NULL;
@@ -580,6 +582,17 @@ void mtl_present_wait(uint64_t tk) {   // NVN acquire: the window texture's last
     if (!tk) return;
     pthread_mutex_lock(&g_pq_mu);
     while (g_pq_done < tk) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
+    pthread_mutex_unlock(&g_pq_mu);
+}
+// dm_gfx_suspend (hle_nvn.c): stop admitting display work while the graphics gate is closed, then release the frames
+// already queued without waiting for the GPU. The present thread keeps consuming the queue (so mtl_present_wait
+// releases) but blits nothing while suspended; resume clears the flag and the next frame goes on screen again.
+void mtl_set_present_suspended(int on) { atomic_store(&g_present_suspended, on != 0); }
+void mtl_drop_queued_presents(void) {
+    pthread_mutex_lock(&g_pq_mu);
+    if (g_pq_head != g_pq_tail) g_pq_done = g_pq[(g_pq_head - 1) % PQ_N].n;   // newest enqueued frame: every acquire wait up to it releases
+    g_pq_tail = g_pq_head;
+    pthread_cond_broadcast(&g_pq_cv);
     pthread_mutex_unlock(&g_pq_mu);
 }
 double mtl_presented_time(uint64_t n) { (void)n; return 0; }   // no display timing here; the governor's late check stays off

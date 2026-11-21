@@ -34,6 +34,9 @@ uint64_t mtl_completed_fence(void) { return mtl_last_fence(); }
 int mtl_wait_acq(uint64_t fence, uint64_t timeout_ns) { return mtl_wait(fence, timeout_ns); }
 void mtl_arch_save(int wait_ms, int ending) { (void)wait_ms; (void)ending; }
 void mtl_set_queue_origin_lower_left(int on) { (void)on; }
+// dm_gfx_suspend's drain worker (hle_nvn.c): wait for the GPU work already submitted, not for new work (the graphics
+// gate is closed). The Vulkan backend's last fence is the newest submission; mtl_wait releases when it completes.
+void mtl_suspend_drain(void) { mtl_wait(mtl_last_fence(), 3000000000ull); }
 
 // ---- present ----
 void mtl_present_layer(uint32_t w, uint32_t h) { (void)w; (void)h; }

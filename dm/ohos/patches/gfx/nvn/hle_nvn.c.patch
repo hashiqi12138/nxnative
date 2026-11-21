@@ -1,6 +1,6 @@
 --- a/gfx/nvn/hle_nvn.c
 +++ b/gfx/nvn/hle_nvn.c
-@@ -202,16 +202,18 @@
+@@ -203,16 +203,18 @@
  __attribute__((weak)) int dm_sdk_nvn2_item(unsigned item, int *out) { (void)item; (void)out; return 0; }
  __attribute__((weak)) int dm_glslc_gpu_code(int *major, int *minor) { *major = *minor = 0; return 0; }   // hle_glslc.c: the game's own GLSLC's GPU code version
  static void nvn_api(int api[2]) {
@@ -23,7 +23,7 @@
  }
  NVN(nvnDeviceGetInteger, void, const NVNdevice *d, NVNdeviceInfo what, int *out) {
      (void)d;
-@@ -287,6 +289,14 @@
+@@ -288,6 +290,14 @@
      o->magic = MAGIC('P', 'O', 'O', 'L'); o->flags = s->flags; o->mem = s->mem; o->size = s->size; o->vp = NULL; o->vmode = 0;
      if (!o->mem && (o->flags & 0x200)) { uint8_t *vr = vpool_reserve(o); if (vr) o->mem = vr; }   // a virtual pool's own address range until its first mapping decides (see MapVirtual)
      else if (o->mem) { mtl_pool_add(o->mem, o->size); nvn_dirty_add_range(o->mem, o->size); }
@@ -38,7 +38,7 @@
      if (o->mem && !(o->flags & 0x200)) dm_device_share(o->mem, o->size, 1);   // the GPU maps the storage: the host refuses to unmap it until Finalize, as Horizon does (hle_svc.c)
      if (!o->mem && !(o->flags & 0x200)) LOG("[RED] MemoryPoolInitialize: non-virtual pool has no storage flags=%#x size=%#llx", o->flags, o->size);
      if (getenv("DM_NVN_VLOG")) { LOG("[nvn] MemoryPool %p mem=%p size=%#llx flags=%#x", (void *)p, (void *)o->mem, (unsigned long long)o->size, o->flags); void dm_backtrace(uint64_t fp); dm_backtrace((uint64_t)__builtin_frame_address(0)); }
-@@ -775,7 +785,9 @@
+@@ -776,7 +786,9 @@
  
  // ---------- Programs ----------
  NVN(nvnProgramInitialize, NVNboolean, NVNprogram *p, NVNdevice *d) {
@@ -49,7 +49,7 @@
  }
  NVN(nvnProgramFinalize, void, NVNprogram *p) {
      pthread_mutex_lock(&g_sub_mu); mtl_prog_forget((const prog_t *)p); mtl_prog_release((prog_t *)p); pthread_mutex_unlock(&g_sub_mu);
-@@ -1507,6 +1519,8 @@
+@@ -1513,6 +1525,8 @@
  }
  NVN(nvnCommandBufferSetDepthRange, void, NVNcommandBuffer *c, float n, float f) { *REC(c, OP_DEPTH_RANGE, p_depth_range) = (p_depth_range){n, f}; }
  NVN(nvnCommandBufferBindProgram, void, NVNcommandBuffer *c, const NVNprogram *p, int stages) {
@@ -58,7 +58,7 @@
      *REC(c, OP_BIND_PROGRAM, p_bind_program) = (p_bind_program){(const prog_t *)p, stages};
  }
  static void bind_state(NVNcommandBuffer *c, int kind, const void *st, size_t n) {
-@@ -3333,6 +3347,7 @@
+@@ -3452,6 +3466,7 @@
  // The host identifies stages by the control section and does not use the extension field: convert to plain NVNshaderData and hand it to SetShaders.
  typedef struct { NVNbufferAddress data; const void *control; uint64_t ext; } shader_data_ext;
  NVN_NOPROTO(nvnProgramSetShadersExt, NVNboolean, NVNprogram *p, int n, const shader_data_ext *sd) {

@@ -16,3 +16,9 @@ static inline int mach_wait_until(uint64_t deadline) {
 #define DM_CLOCK_NSEC_NP
 static inline uint64_t clock_gettime_nsec_np(clockid_t c) { struct timespec t; if (clock_gettime(c, &t)) return 0; return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
 #endif
+// Darwin's uptime clock counts time since boot but not while the system sleeps; Linux/OHOS CLOCK_MONOTONIC has the same
+// semantics. The C units compiled here (hle_nvn.c's suspend drain) read it through clock_gettime_nsec_np; the .m units
+// that also use it are Apple-only and get the real constant from <time.h>.
+#if !defined(__APPLE__) && !defined(CLOCK_UPTIME_RAW)
+#define CLOCK_UPTIME_RAW CLOCK_MONOTONIC
+#endif

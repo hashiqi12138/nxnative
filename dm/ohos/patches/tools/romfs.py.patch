@@ -1,6 +1,6 @@
 --- a/tools/romfs.py
 +++ b/tools/romfs.py
-@@ -93,6 +93,14 @@
+@@ -117,6 +117,14 @@
  
  def _resolve(path):
      p = _os.path.abspath(_os.fsdecode(path))
@@ -15,15 +15,15 @@
      parts = p.split('/')
      for i, part in enumerate(parts):
          if not part.endswith('.img'): continue
-@@ -116,6 +124,7 @@
- class _File(io.RawIOBase):
-     def __init__(self, image, k):
-         self.fd = _os.open(image.path, _os.O_RDONLY)
+@@ -142,6 +150,7 @@
+         descriptors = _scan_descriptors.get()
+         backing = descriptors.get(image.path) if descriptors is not None else None
+         self.fd = _os.dup(backing[1]) if backing is not None and backing[0] == _identity(image.stat) else _os.open(image.path, _os.O_RDONLY)
 +        self.path = image.path   # kept for the Windows read fallback below (no pread there)
          self.start, self.length = image.entry(k)[:2]
          self.pos = 0
          _fd_ranges[self.fd] = (self.start, self.length)
-@@ -129,7 +138,17 @@
+@@ -155,7 +164,17 @@
          self.pos = pos; return pos
      def readinto(self, buffer):
          size = min(len(buffer), max(0, self.length - self.pos))
@@ -42,7 +42,7 @@
          buffer[:len(data)] = data; self.pos += len(data)
          return len(data)
      def close(self):
-@@ -208,6 +227,18 @@
+@@ -234,6 +253,18 @@
  def walk(top, topdown=True, onerror=None, followlinks=False):
      if not _resolve(top):
          yield from _os.walk(top, topdown=topdown, onerror=onerror, followlinks=followlinks); return
@@ -61,7 +61,7 @@
      def visit(path):
          try:
              dirs, files = [], []
-@@ -216,9 +247,9 @@
+@@ -242,9 +273,9 @@
          except OSError as error:
              if onerror: onerror(error)
              return
@@ -73,7 +73,7 @@
      yield from visit(top)
  
  
-@@ -252,6 +283,28 @@
+@@ -278,6 +309,28 @@
  class _PathOps:
      exists = staticmethod(exists); isdir = staticmethod(isdir); isfile = staticmethod(isfile)
      getsize = staticmethod(lambda path: stat(path).st_size)

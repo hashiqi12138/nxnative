@@ -1,12 +1,12 @@
 # The Legend of Zelda: Ocarina of Time (`0400486024DEC000`)
 
-A Switch 2 game: update v131072, SDK 22.2.8 (`Ounce`). Nintendo EPD's engine (sead, agl, gsys, Havok, CRIWARE; project `Owl`, with Tears of the Kingdom's file layout) on NVN2. Modules `main`, `subsdk0` (NintendoSDK_movie) and `sdk`; the rewriter's patches are a frame-step stub and one cut ([`patches.py`](patches.py)). Status: plays on the Mac through the title, the opening, a new file's first scene, Link's house and Kokiri Forest, with saves, at about 59 fps with the picture close to console video. Mac only so far.
+A Switch 2 game: update 1.1.1 (v131072), SDK 22.2.8 (`Ounce`). Nintendo EPD's engine (sead, agl, gsys, Havok, CRIWARE; project `Owl`, with Tears of the Kingdom's file layout) on NVN2. Modules `main`, `subsdk0` (NintendoSDK_movie) and `sdk`; the rewriter's patches are a frame-step stub and one cut ([`patches.py`](patches.py)). Status: plays on the Mac through the title, the opening, a new file's first scene, Link's house and Kokiri Forest, with saves, at about 59 fps with the picture close to console video.
 
 ## What it needs
 
 | Setting | Where | Why |
 |---|---|---|
-| `mem_reserve 0x320000000`, `mem_alias 0x100000000`, `mem_stack 0x10000000`, `app_pool 0x240000000` | [`game.tsv`](game.tsv) | the game asks `SetHeapSize` for 0x18ce00000; the rest as Donkey Kong Bananza, the Switch 2's 9 GB |
+| `mem_reserve 0x420000000`, `mem_alias 0x200000000`, `mem_stack 0x10000000`, `app_pool 0x240000000` | [`game.tsv`](game.tsv) | the game asks `SetHeapSize` for 0x18ce00000 and needs the larger alias region at the Chamber of Sages transition ([Memory](#memory)) |
 | `mem_map_limit on` | [`game.tsv`](game.tsv) | a map past the application pool fails with ResultLimitReached, as on Horizon. The SDK's allocator keeps freed pages mapped until a map fails, then gives them back ([PR 1444](https://github.com/seedds/nxnative/pull/1444) reports a black screen leaving the Deku Tree without it; not reached here) |
 | `sys_resource 0x3000000` | `game.tsv` | 48 MB, as the NPDM declares |
 | Dynamic-resolution stub | [`patches.py`](patches.py) (frame step rule, `others`) | full resolution unless the launcher's Dynamic resolution is on ([Dynamic resolution](#dynamic-resolution)) |
@@ -106,6 +106,7 @@ From the same Kakariko save, walk into Hyrule Field and continue towards Castle 
 
 ## Memory
 
+- **Resolved.** With a 4 GiB alias region the first Master Sword sequence stays solid white after Ganondorf walks into the light. On an M4 Pro (macOS 27.2.1, host `d2fd78b4`), the SDK's `VammManager::AllocateAddressRegion` hit its no-fit branch at `sdk+0x16bc9c` and returned `0x1803` for a 50.03 MiB request with 2 MiB alignment from `main+0x7ed630`. At 8 GiB the same save and inputs placed the request at alias +0x10aa00000 and reached the Chamber of Sages. The reporter also confirmed the transition in a roughly 27-minute iPhone 18 Pro session (iOS 27.2.1). Startup with the 16.5 GiB reservation on earlier iPhones and later stages of the game remain open. [Issue #3103](https://github.com/seedds/nxnative/issues/3103)
 - Current: on the walk, run from an external drive with a 3.5 GB pipeline archive: resident 10.9-11.4 GB, wired about 9.4 GB, on a 16 GB Mac. `vmmap` and `footprint`: 6.4 GB of guest memory and 3.8 GB of Metal textures and targets, 1 GB of IOAccelerator memory. [Reading the archive into memory](../../../docs/reference/memory.md#a-pipeline-archive-on-an-external-drive-is-read-into-memory) used to add 3.5 GB (footprint 15.0, peak 16.7). `mem_map_limit on`: a map past the application pool fails as on Horizon, and the SDK's allocator then gives back the pages it keeps. Other apps' memory adds to the swap: other games running beside it can push the Mac over.
 - This game took the Mac down before the fixes (kernel panic in `IOGPUGroupMemory` at 14.7 GB wired): [raw pool table](../../../docs/reference/memory.md#memory-pools-nothing-gave-an-address-to-stay-out-of-the-raw-pool-table), [textures made only when read](../../../docs/reference/memory.md#shaders-report-which-textures-they-read-through-a-pool), [out-of-memory exit](../../../docs/reference/memory.md#repeated-gpu-out-of-memory-failures-end-the-game).
 - Why so much: the game's own memory is about the console's 9 GB application pool, and on the Mac its textures also exist as Metal textures, as Metal cannot sample the guest's block-linear storage.
@@ -236,6 +237,10 @@ Its 37 kernels that correct samples, NDSR's network among them, gave about 0.25 
 
 ## Found on this game
 
+- [Upload retirement can block Metal 4 feedback](../../../docs/reference/memory.md#upload-retirement-can-block-metal-4-feedback). NX18 reported a freeze on an iPhone 18 Pro Max after loading a save. A synthetic lock stall reproduced the feedback blockage. The cause of the device freeze remains open.
+- [Going to the background while graphics do not drain](../../../docs/reference/nvn-objects.md#going-to-the-background-while-graphics-do-not-drain): NX18's iPhone 18 Pro Max run froze before the background transition. The host now bounds the transition's graphics wait and starts persistence independently. The cause of the initial freeze and the revised iOS behavior are open.
+
+- [An app packed without control data says version 1.0](../../../docs/reference/packing.md#an-app-packed-without-control-data-says-version-10). The local NUP has no NACP or display label. The registered v131072 build row supplies 1.1.1 to the packer and the host. On an Apple M6 with macOS 27.2.1, the rebuilt host reached the title menu and the game called `GetDisplayVersion` during boot.
 - [Inlining mesh helpers with subgroup inputs can crash the Metal compiler](../../../docs/reference/shaders.md#inlining-mesh-helpers-with-subgroup-inputs-can-crash-the-metal-compiler). The subgroup helper workaround clears the isolated foliage pipeline and the 164-row offline matrix at the supported deployment minimums.
 - [Missing required functions at the render pipeline API](../../../docs/reference/rendering.md#missing-required-functions-at-the-render-pipeline-api). The device API now returns an error for missing functions. The abort inside a bundled archive lookup remains open.
 
@@ -380,6 +385,7 @@ Its 37 kernels that correct samples, NDSR's network among them, gave about 0.25 
 - [An HMMA outside a chain overwrote the chain's accumulator](../../../docs/reference/shaders.md#an-hmma-outside-a-chain-overwrote-the-chains-accumulator): dotted rows across fog and light in play.
 - [HMMA rounds its f16 accumulator once per 8 products](../../../docs/reference/shaders.md#hmma-rounds-its-f16-accumulator-once-per-8-products): resolved, its NDSR upscaler and NDVE movie network were a few f16 steps off the console in about half of each HMMA's outputs (nothing visible).
 - [The NDVE movie network by the host](../../../docs/reference/shaders.md#the-ndve-movie-network-by-the-host): the title and movies' network as the host's kernels, bound to nn::ndve's model (on by default; `DM_NDVE_ENGINE=check` compares it with the game's in the run).
+- [An interrupted compute compile broke the NDVE sequence](../../../docs/reference/shaders.md#an-interrupted-compute-compile-broke-the-ndve-sequence): fixed in the host. On an M2 MacBook Air the opening movie showed green striped blocks after the compiler service died (issue #2920). On an M4 Pro with macOS 27.2.1, NDVE stayed active through the `title-movie` route and the captured frames showed no stripes.
 - [LDSM reads rows other lanes stored](../../../docs/reference/shaders.md#ldsm-reads-rows-other-lanes-stored): white blotches over Kokiri Forest through agl's upscaler on an M4 Pro.
 - [A shader that writes a whole frame through raw global memory](../../../docs/reference/frame-rate.md#a-shader-that-writes-a-whole-frame-through-raw-global-memory)
 - [Stage memory byte stores through a compare-and-swap loop](../../../docs/reference/shaders.md#stage-memory-byte-stores-through-a-compare-and-swap-loop): 515 shaders, the foliage mesh shaders among them; pull request #1503 measured the foliage pass at 8.3-8.6 ms on an M3 Pro with the loop, while on an M6 the loop, the store and AND / OR measure the same.
@@ -409,6 +415,7 @@ Its 37 kernels that correct samples, NDSR's network among them, gave about 0.25 
 - [A full table of running GPU writes ends passes for nothing](../../../docs/reference/frame-rate.md#a-full-table-of-running-gpu-writes-ends-passes-for-nothing)
 - [Float atomics in storage memory](../../../docs/reference/shaders.md#float-atomics-in-storage-memory)
 - [textureGatherOffsets and a loop over its offsets](../../../docs/reference/shaders.md#texturegatheroffsets-and-a-loop-over-its-offsets)
+- [Runtime per-texel gathers wrap wide offsets on Metal](../../../docs/reference/shaders.md#runtime-per-texel-gathers-wrap-wide-offsets-on-metal): `55fcda025feae496` and `ce8270569d33a7af` compute offsets in 0…19. In `d17eefaff4f0bc23`, each runtime gather is guarded by the predicate that loads its packed offsets, which are literals in -4…4.
 - [Image atomics on a 32-bit colour texture](../../../docs/reference/shaders.md#image-atomics-on-a-32-bit-colour-texture)
 - [A host's own store in a fragment shader moves its depth test](../../../docs/reference/frame-rate.md#a-hosts-own-store-in-a-fragment-shader-moves-its-depth-test)
 - [Dead-code removal dropped a coordinate of a multi-output instruction](../../../docs/reference/shaders.md#dead-code-removal-dropped-a-coordinate-of-a-multi-output-instruction)
@@ -428,4 +435,5 @@ Its 37 kernels that correct samples, NDSR's network among them, gave about 0.25 
 - [A movie's frame counts frames drawn, not pictures](../../../docs/reference/movies.md#a-movies-frame-counts-frames-drawn-not-pictures): resolved, the opening's subtitles, voice lines and logo behind the picture once it took two pictures a frame; a cut in the movie's two draws.
 - [`devicectl` copies a large RomFS image through the Mac's memory](../../../docs/reference/packing.md#devicectl-copies-a-large-romfs-image-through-the-macs-memory): the 26.2 GB image's pushes to an iPad filled a 16 GB Mac's swap and failed; now sent over AFC.
 - [`devicectl`'s `--remove-existing-content` empties the app's whole container](../../../docs/reference/packing.md#devicectls---remove-existing-content-empties-the-apps-whole-container): the first complete copy of the image, deleted by the DLC step after it.
+- [Mac menu bar over the fullscreen game](../../../docs/reference/services.md#mac-menu-bar-over-the-fullscreen-game).
 - [The driver wires memory tens of thousands of times a second with residency sets on the queues](../../../docs/reference/frame-rate.md#the-driver-wires-memory-tens-of-thousands-of-times-a-second-with-residency-sets-on-the-queues): resolved by naming the residency sets on each command buffer; the driver's cause is open. 0 of 20 launches in the state on a 16 GB M4 and 0 of 4 on a 16 GB M2, against 10 of 20 and 5 of 5.
