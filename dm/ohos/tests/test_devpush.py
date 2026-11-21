@@ -86,7 +86,9 @@ def env(tmp_path, monkeypatch):
     (deveco / 'tools' / 'hvigor' / 'bin' / 'hvigorw.bat').write_text('', encoding='utf-8')
     (deveco / 'sdk' / 'default' / 'openharmony' / 'toolchains' / 'hdc.exe').write_text('', encoding='utf-8')
 
-    game = 'T' + uuid.uuid4().hex[:8]
+    # 'aa' is the only FakeShell.ran needle made of hex digits: a random hex carrying it made ran('aa', 'start')
+    # match a file-send call that merely passes through the build dir (CI 2026-11-21), so scrub it
+    game = 'T' + uuid.uuid4().hex[:8].replace('aa', 'ab')
     build_root = tmp_path / 'build_root'
     build_root.mkdir()
     build = build_root / ('ohos_build_dmhost_' + game)
