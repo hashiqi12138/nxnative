@@ -68,6 +68,15 @@ static OH_AudioData_Callback_Result on_write(OH_AudioRenderer *r, void *ud, void
     struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
     AudioTimeStamp ts = {.mSampleTime = (Float64)atomic_fetch_add(&u->sample_time, (uint64_t)frames), .mHostTime = (UInt64)t.tv_sec * 1000000000ull + (UInt64)t.tv_nsec};
     if (u->cb.inputProc(u->cb.inputProcRefCon, &fl, &ts, 0, (UInt32)frames, &bl)) memset(audio, 0, (size_t)bytes);
+    // DM_AUDIO_PROBE=1: peak amplitude of the PCM handed to the renderer, every 2000 callbacks (~10 s). Tells whether the
+    // host produces sound (peak > 0) or silence (peak 0), independent of the device volume / route / focus.
+    { static _Atomic uint64_t pn; static int probe = -1;
+      if (probe < 0) { const char *e = getenv("DM_AUDIO_PROBE"); probe = e && atoi(e); }
+      if (probe && (atomic_fetch_add(&pn, 1) % 2000) == 0 && !(u->fmt.mFormatFlags & kAudioFormatFlagIsFloat)) {
+          const int16_t *s = (const int16_t *)audio; int32_t peak = 0; int nsamp = bytes / 2;
+          for (int i = 0; i < nsamp; i++) { int32_t v = s[i] < 0 ? -(int32_t)s[i] : s[i]; if (v > peak) peak = v; }
+          LOG("[audio] probe: %d frames, peak %d / 32767 (%s)", frames, (int)peak, peak ? "sound" : "SILENT");
+      } }
     atomic_fetch_sub(&u->in_cb, 1);
     return AUDIO_DATA_CALLBACK_RESULT_VALID;
 }
