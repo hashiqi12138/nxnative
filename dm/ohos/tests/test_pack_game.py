@@ -13,6 +13,7 @@ import tarfile
 import pytest
 
 TITLE = '01007EF00011E000'
+NO_PROFILE = '0100000000F0F000'   # no dm/games profile: build writes no profile.tsv and keeps the pack's own manifest
 STAMP = 'dccb848e7ac5649acd9819fabe713003d6fbf952'
 
 
@@ -179,10 +180,12 @@ def test_build_leaves_the_manifest_out_of_the_body(pack_game, tmp_path):
 
 
 def test_build_carries_the_manifest_stamp_into_the_header(pack_game, tmp_path):
+    # a title without a profile: build keeps the pack's own manifest (a profile makes it regenerate dm.files.tsv
+    # so profile.tsv takes part in the stamp, and the hand-written one below would be replaced)
     src = make_pack(tmp_path / 'pack')
     (src / 'dm.files.tsv').write_text('# DM_DATA %s\n' % STAMP, encoding='utf-8')
     out = tmp_path / 'game.nxpk'
-    pack_game.build(str(src), TITLE, str(out))
+    pack_game.build(str(src), NO_PROFILE, str(out))
     with open(out, 'rb') as f:
         assert pack_game.read_header(f)['stamp'] == STAMP
 
@@ -190,7 +193,7 @@ def test_build_carries_the_manifest_stamp_into_the_header(pack_game, tmp_path):
 def test_build_stamps_the_tree_when_there_is_no_manifest(pack_game, tmp_path, monkeypatch):
     """No dm.files.tsv and no generator: the stamp falls back to hashing the tree, so the app still sees change."""
     src = make_pack(tmp_path / 'pack')
-    monkeypatch.setattr(pack_game, 'ensure_manifest', lambda p: None)
+    monkeypatch.setattr(pack_game, 'ensure_manifest', lambda p, force=False: None)
     out = tmp_path / 'game.nxpk'
     pack_game.build(str(src), TITLE, str(out))
 
@@ -237,7 +240,7 @@ def test_check_accepts_a_pack_it_just_built(pack_game, tmp_path, capsys):
 def test_check_counts_the_tar_members(pack_game, tmp_path, capsys):
     src = make_pack(tmp_path / 'pack')
     out = tmp_path / 'game.nxpk'
-    pack_game.build(str(src), TITLE, str(out))
+    pack_game.build(str(src), NO_PROFILE, str(out))   # a profile title would add profile.tsv as an eighth member
     capsys.readouterr()
     pack_game.check(str(out))
     # every member, not just the top-level entries: RomFS, RomFS/Model, RomFS/Model/a.sbfres,
