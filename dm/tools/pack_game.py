@@ -121,9 +121,14 @@ def build(pack, title, out):
         print('pack_game: no dm.files.tsv; stamping the tree instead')
 
     # Build the tar into a temp file beside the output (F: has room; C: TEMP does not for 14 GB)
+    # GNU, not ustar: ustar splits a path into a 155-byte prefix and a 100-byte name, so a single file name longer
+    # than 100 bytes cannot be encoded at all ("name is too long"). Tears of the Kingdom has 48 such names in its
+    # RomFS (RomFS/Event/.../VisibleSageAndNotParticipateCombWithIgnoreDissentPlayFlowchartEvent.engine__event__...).
+    # GNU format writes those as a '././@LongLink' member (typeflag 'L') whose data is the full path, then the
+    # header; the app's reader (PackImport.ets) takes that member as the next header's name.
     tar_path = out + '.tar.tmp'
     n = 0
-    with tarfile.open(tar_path, 'w', format=tarfile.USTAR_FORMAT) as tf:
+    with tarfile.open(tar_path, 'w', format=tarfile.GNU_FORMAT) as tf:
         for name in sorted(os.listdir(pack)):
             if name == 'dm.files.tsv':
                 continue   # the manifest rides in the header, not the body: the app must not unpack it

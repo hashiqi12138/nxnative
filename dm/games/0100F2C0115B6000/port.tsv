@@ -1,0 +1,16 @@
+# The Legend of Zelda: Tears of the Kingdom on HarmonyOS (keys in docs/ARCHITECTURE.md "Game profiles")
+# Nintendo EPD's engine (sead / agl / gsys, NintendoWare G3d2 / Ui2d / Vfx2, Havok), SDK 20.5.22, NVN; modules main + subsdk0 + sdk;
+# subsdk0 and sdk are the same builds as Breath of the Wild 1.9.0's. Update 1.4.3 (v720896) over the base game; the profile's
+# build row matches, so the port carries the build's own fixes (the SDK node-area cut, the frame step, tex_flush_upload/tex_dirty_upload).
+# 28,669 shaders split and translated; the data pack is 304,266 files / 17.4 GB (RomFS 304,243 files / 15.86 GB).
+# Two Windows-side gaps had to be closed to pack this game (both are general, not TotK-specific):
+#   1. porter's data stage passed <game>/RomFS.img to datapack.link_tree, which os.walk()s it - a file yields no entries,
+#      so the pack came out with mods/ + shaders.dmsv only and the app saw no RomFS. The image is unpacked into
+#      <build>/romfs_dir/RomFS, which the same stage already looks for, and the extraction itself is then reused.
+#   2. pack_game.py framed the tar as USTAR, which splits a path into a 155-byte prefix and a 100-byte name: TotK has
+#      48 file names longer than 100 bytes, and tarfile refused them ("name is too long"). The container is GNU format
+#      now (typeflag 'L' long-name members; 1,569 paths in this pack), and PackImport.ets reads them.
+status	experimental
+tested	not run on a device yet: built and packed on Windows (2026-11-21), install and bring-up pending
+package	org.nx2a.t0100f2c0115b6000
+orientation	landscape

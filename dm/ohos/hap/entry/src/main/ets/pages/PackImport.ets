@@ -142,6 +142,8 @@ export async function importPack(path: string, root: string, info: PackInfo,
 
   const src = fs.openSync(path, fs.OpenMode.READ_ONLY);
   let files: number = 0;
+  // the path a GNU 'L' member carried for the header that follows it ('' when the header names itself)
+  let longName: string = '';
   let pos: number = HEADER_SIZE;   // the tar body starts right after the 80-byte container header
   const BLOCK: number = 512;
   const header: ArrayBuffer = new ArrayBuffer(BLOCK);
@@ -165,9 +167,30 @@ export async function importPack(path: string, root: string, info: PackInfo,
       if (allZero) break;
       const name: string = tarString(hbytes, 0, 100);
       const prefix: string = tarString(hbytes, 345, 155);
-      const full: string = prefix.length ? prefix + '/' + name : name;
       const size: number = tarOctal(hbytes, 124, 12);
       const type: number = hbytes[156];
+      // GNU long names: a path longer than ustar's 100-byte name field (or its 155-byte prefix) is written as a
+      // '././@LongLink' member of typeflag 'L' whose data is the full path; the member after it is the real entry.
+      // Tears of the Kingdom needs this: 48 of its RomFS file names exceed 100 bytes. The path is read here and
+      // used for the next header, which then carries a truncated placeholder name.
+      if (type === 0x4C) {
+        const raw: ArrayBuffer = new ArrayBuffer(size);
+        const gotName: number = fs.readSync(src.fd, raw, { offset: pos, length: size });
+        if (gotName !== size) throw new Error('short read of a long-name member');
+        longName = tarString(new Uint8Array(raw), 0, size).replace(/\0+$/, '');
+        pos += size;
+        const lpad: number = (BLOCK - (size % BLOCK)) % BLOCK;
+        pos += lpad;
+        continue;
+      }
+      if (type === 0x4B) {   // 'K': the long link target, which a game pack has no use for
+        pos += size;
+        const kpad: number = (BLOCK - (size % BLOCK)) % BLOCK;
+        pos += kpad;
+        continue;
+      }
+      const full: string = longName.length ? longName : (prefix.length ? prefix + '/' + name : name);
+      longName = '';
       // '0' or NUL: a regular file; '5': a directory; others (links, pax) are skipped by their size
       if (type === 0 || type === 0x30) {
         const dst: string = root + '/' + full;
