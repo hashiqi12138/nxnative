@@ -51,7 +51,14 @@ static int split_vals(char *v, char *out[], int max, const char *path, const cha
 
 int game_profile_load(const char *path) {
     FILE *f = fopen(path, "r");
-    if (!f) { LOG("[RED] game profile: cannot open %s (the pack carries it beside env.txt)", path); return -1; }
+    if (!f) {
+        // An older pack carries no profile.tsv: start from the build's own profile, which is exactly what a builtin host
+        // compiled in (DESIGN-P4.1 section 5). A profile that exists but does not parse is still refused below.
+        static const dm_game_t def = DM_GAME_DEFAULT_PROFILE;   // a brace list initializes a definition, not an assignment
+        dm_games[0] = def; dm_n_games = 1;
+        LOG("game profile: %s not found; using the build's default profile (%s)", path, dm_games[0].id);
+        return 0;
+    }
     char line[8192]; dm_game_t *g = NULL; int rc = 0;
     while (fgets(line, sizeof line, f)) {
         size_t n = strlen(line);

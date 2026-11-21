@@ -171,6 +171,21 @@ def _list_items(v):
     return [_unq(x) for x in re.findall(r'"(?:[^"\\]|\\.)*"', v or '')]
 
 
+def _default_row(g):
+    """A dm_game_t initializer for the build's own profile: the row a runtime host falls back to when the pack carries no
+    profile.tsv (an older pack). The values are header_one's own C literals, so the fallback is the builtin host exactly."""
+    d = _macros(g)
+    vals = [f'.{f} = {d.get(m, "0")}' for f, m, _ in RT_FIELDS if f != 'nmod']   # nmod comes from the list below
+    mods = _list_items(d.get('DM_GAME_MODULES', ''))
+    vals += ['.nmod = %d' % len(mods), '.modules = { ' + ', '.join(json.dumps(m) for m in mods) + ' }']
+    for field, macro in (('builds', 'DM_GAME_BUILD_MODULES'), ('versions', 'DM_GAME_DISPLAY_VERSIONS')):
+        items = _list_items(d.get(macro, ''))
+        pairs = [(items[i], items[i + 1]) for i in range(0, len(items) - 1, 2)]
+        vals += ['.n%s = %d' % (field, len(pairs)),
+                 '.%s = { %s }' % (field, ', '.join('{ %s, %s }' % (json.dumps(a), json.dumps(b)) for a, b in pairs))]
+    return '{ ' + ', '.join(vals) + ' }'
+
+
 def profile(progs, src):
     """The runtime profile: one "<field>\\t<value...>" line per constant, per program ("program <n>" starts one). The rows
     are header_one's own values, so a runtime host and a builtin one cannot disagree; the C parser only reads fields."""
@@ -210,7 +225,10 @@ def header_rt(progs, src):
          'extern dm_game_t dm_games[DM_GAME_MAX_PROGRAMS];',
          'extern int dm_n_games;',
          'const dm_game_t *dm_game_cur(void);   // game_profile_rt.c: the entry of the program DM_PROGRAM names',
-         'int game_profile_load(const char *path);   // 0 = loaded, -1 = refused (the reason is logged)',
+         'int game_profile_load(const char *path);   // 0 = loaded (or fell back to the default), -1 = refused (logged)',
+         # The row a host starts with when the pack carries no profile.tsv (an older pack): the build's own profile, so a
+         # runtime host behaves exactly as a builtin one did before the profile moved out (DESIGN-P4.1 section 5).
+         '#define DM_GAME_DEFAULT_PROFILE ' + _default_row(progs[0][1]),
          '#define DM_GAME_NGAMES dm_n_games',
          '#define DM_GAME_FIELD_TABLE(X) ' + ' \\\n    '.join(
              [f'X(str, {f}, {f})' for f, _, t in RT_FIELDS if t == 'str'] +
