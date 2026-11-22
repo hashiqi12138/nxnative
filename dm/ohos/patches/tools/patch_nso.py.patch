@@ -13,7 +13,7 @@
  
  # ---- Unreal console variables in main (dm/tools/ue_cvar.py finds them by their registered names, without a build ID) ----
  # The fixups table names each one's TAutoConsoleVariable (UE_CVAR:<name>); the host writes those the profile decides on (hle_fpslock.c, hle_uecvar.c)
-@@ -288,6 +294,11 @@
+@@ -288,11 +294,27 @@
      if kind: fix.append((len(patch), kind))
      patch.extend(struct.pack('<I', w & 0xFFFFFFFF))
  
@@ -25,7 +25,23 @@
  def emit_key_addr(reg, kind):
      fix.append((len(patch), kind)); emit(ADRP(reg, here(), KEY_PAGE_OFF)); emit(LDRX(reg, reg, KEY_INDEX[kind]))
  
-@@ -352,7 +363,7 @@
+ def emit_slot_addr(base, key_reg, kind):
+     emit_key_addr(key_reg, kind); emit(ADDR(base, base, key_reg))
++def emit_slot_load(rd, temp, kind, wide=True):
++    """rd = thread slot <kind>, using temp as the address and rd itself as the key register (rd's old value must be dead).
++    The thread pointer comes from emit_tp's target: tpidrro_el0 on apple, tpidr_el0 + TPOFF on ohos (musl leaves tpidrro_el0
++    at 0 for user code, so the apple form would read the slot at address 0 — Tears of the Kingdom's MeshCode thread died at
++    0x8 exactly there)."""
++    if TARGET == 'ohos':
++        emit(MRS_TPIDR(temp)); emit_key_addr(rd, 'TPOFF'); emit(ADDR(temp, temp, rd))
++    else:
++        emit(MRS_TPIDRRO(temp))
++    emit_slot_addr(temp, rd, kind)
++    emit(LDRX(rd, temp) if wide else 0xB9400000 | (temp << 5) | rd)  # ldr wD,[xT] zero-extends the result
+ 
+ # ---- Encoders: dm/tools/nso_asm.py (imported above) ----
+ 
+@@ -352,7 +374,7 @@
      save = -16 if dlt == 0 else -112          # Instructions that modify sp write below sp, so the scratch save is placed deep in the reserved area
      assert dlt == 0 or dlt >= -96, f'sp delta {dlt} at {ins.address:x}'
      start = here()
@@ -34,7 +50,17 @@
      emit(subst(ins, S))
      emit(STRX(S, T))                 # Always write back: capstone can miss reporting a write (the adds w18 instance)
      emit(LDP(S, T, 31, save - dlt)); emit(BX(here(), ins.address + 4))
-@@ -422,7 +433,7 @@
+@@ -408,8 +430,7 @@
+     rd, other, other_cond, wide = args
+     start, skip = here(), len(patch)
+     emit(NOP)  # filled with the conditional branch once the other arm's address is known
+-    emit(MRS_TPIDRRO(temp)); emit_slot_addr(temp, rd, 'K18')
+-    emit(LDRX(rd, temp) if wide else 0xB9400000 | (temp << 5) | rd)  # ldr wD,[xT] zero-extends the result
++    emit_slot_load(rd, temp, 'K18', wide)
+     emit(BX(here(), ins.address + 4))
+     struct.pack_into('<I', patch, skip, BEQ(start, here()) | other_cond)
+     if not wide or rd != other: emit(MOVX(rd, other) if wide else MOVX(rd, other) & 0x7FFFFFFF)
+@@ -422,7 +443,7 @@
      copy the old sp into T first, and after the instruction restore S / T relative to T (without writeback, ldp may use the base register as a destination). x18 is not written, so the slot is not written back"""
      S, T = pick(regs_in(ins))
      start = here()
@@ -43,7 +69,7 @@
      emit(ADDI(T, 31, 0))             # mov T, sp (in add immediate, 31 is sp)
      emit(subst(ins, S))
      emit(LDP(S, T, T, -16)); emit(BX(here(), ins.address + 4))
-@@ -452,7 +463,7 @@
+@@ -452,7 +473,7 @@
      if (dd.mnemonic, dd.op_str) != (ins.mnemonic, want): raise RuntimeError(f'casp subst fail {ins.address:x} {ins.mnemonic} {ins.op_str}: {dd.mnemonic} {dd.op_str}')
      start = here()
      emit(STP(P, P + 1, 31, -16)); emit(STUR(T, 31, -24))
@@ -52,7 +78,7 @@
      emit(nw)
      if rs == 18: emit(STRX(P, T)); emit(MOVX(19, P + 1))
      emit(LDUR(T, 31, -24)); emit(LDP(P, P + 1, 31, -16)); emit(BX(here(), ins.address + 4))
-@@ -473,7 +484,7 @@
+@@ -473,7 +494,7 @@
      S, T = pick(regs_in(ins))
      tgt = ins.operands[-1].imm
      start = here()
@@ -61,7 +87,7 @@
      m = ins.mnemonic
      taken = here() + 4 * 3
      off = (taken - here()) >> 2
-@@ -489,7 +500,7 @@
+@@ -489,7 +510,7 @@
      tgt = ins.operands[1].imm
      S, T = pick(set())
      start = here()
@@ -70,7 +96,7 @@
      pc = here(); emit(ADRP(S, pc, tgt))
      if ins.mnemonic == 'adr': emit(ADDI(S, S, tgt & 0xFFF))
      emit(STRX(S, T))
-@@ -500,7 +511,7 @@
+@@ -500,7 +521,7 @@
      """Jump table br x18: target = base + 4i. Stash x16 in the red zone → equally spaced landing pads → restore x16 → original target."""
      start = here()
      emit(STUR(16, 31, -16)); emit(STUR(17, 31, -24))   # x16 / x17 are temporary registers that can stay live within a function; save them to the red zone before borrowing
@@ -79,7 +105,7 @@
      padbase = start + 4 * 24
      delta = padbase - base
      op = ADDI if delta >= 0 else SUBI; dl = abs(delta)
-@@ -523,7 +534,7 @@
+@@ -523,7 +544,7 @@
      x16 = guest x18, compared with each target in turn (adrp + add put the target address in x17); on a match restore x16 / x17 and jump to the original target; no match → brk (the original bounds check already stops out-of-range indices)"""
      start = here()
      emit(STUR(16, 31, -16)); emit(STUR(17, 31, -24))   # as in site_br: save x16 / x17 to the red zone before borrowing
@@ -88,7 +114,7 @@
      uniq = sorted(set(targets))
      pads = here() + 4 * (4 * len(uniq) + 1)
      for k, t in enumerate(uniq):
-@@ -537,7 +548,7 @@
+@@ -537,7 +558,7 @@
      """blr x18 (Engage main+0x9ff324): x16 = guest x18, x30 = the instruction after the original blr, br x16. At a call site x16 / x17 are intra-procedure-call temporaries under the calling convention, so they need no saving;
      the return address is the original one, so the callee returns straight there (IL2CPP's C++ exceptions look up unwind tables by return address and must not stop in the patch area)"""
      start = here()
@@ -97,7 +123,7 @@
      ret = ins.address + 4
      emit(ADRP(30, here(), ret)); emit(ADDI(30, 30, ret & 0xFFF)); emit(BR(16))
      return start
-@@ -545,7 +556,7 @@
+@@ -545,7 +566,7 @@
  def site_br_call(ins):
      """br x18 as an indirect tail call (tail_call): x16 = guest x18, br x16. As at site_blr, x16 / x17 are intra-procedure-call temporaries at a call, and x30 keeps the caller's return address"""
      start = here()
@@ -106,7 +132,7 @@
      return start
  
  def site_slot_copy(ins, src, dst):
-@@ -554,9 +565,9 @@
+@@ -554,9 +575,9 @@
      The Apple kernel may change x18 at any instruction, so the value never passes through it: x15 carries it, and x16 / x17 form the slot addresses, all three saved in the red zone"""
      start = here()
      emit(STP(16, 17, 31, -16)); emit(STUR(15, 31, -24))
@@ -118,7 +144,7 @@
      emit(LDUR(15, 31, -24)); emit(LDP(16, 17, 31, -16))
      emit(BX(here(), ins.address + 4))
      return start
-@@ -567,7 +578,7 @@
+@@ -567,7 +588,7 @@
      if N == 18: return site_slot_copy(ins, kind, 'K18')
      tmp = 16 if N != 16 else 17
      start = here()
@@ -127,7 +153,7 @@
      emit(BX(here(), ins.address + 4))
      return start
  
-@@ -578,7 +589,7 @@
+@@ -578,7 +599,7 @@
      start = here()
      emit(0xF81F0000 | (31 << 5) | T)           # stur xT,[sp,#-16]
      tmp = next(x for x in (16, 17) if x not in (N, T))
@@ -136,7 +162,7 @@
      emit(0xF85F0000 | (31 << 5) | T)           # ldur xT,[sp,#-16]
      emit(BX(here(), ins.address + 4))
      return start
-@@ -587,7 +598,7 @@
+@@ -587,7 +608,7 @@
      """Common section of a gate block (right after stp x29,x30,[sp,#-16]! and before blr x30): x30 = the gate address in thread slot KGATE.
          Fetching the slot through the key page needs a second register to be borrowed; x29 is borrowed and then immediately restored from the stack: the x29 saved by _dm_gate must be
          the guest's original value, since the crash backtrace walks the x29 chain."""
@@ -145,7 +171,7 @@
  
  def site_gate(ins, kind, arg):
      """svc / mrs cntpct_el0 → host gate. The gate address is taken from thread slot KGATE; the gate looks up gates.tsv by return point (the address of this block's ldp)."""
-@@ -673,7 +684,7 @@
+@@ -673,7 +694,7 @@
      S, T = pick(used)
      lo, hi = seg[0].address, seg[-1].address + 4
      start = here()
@@ -154,7 +180,7 @@
      copy0 = here(); n = len(seg)
      # Exit stubs: the first stub right after the window must be the fall-through one (after the last window instruction, hi); targets of branches leaving the window come after it.
      # Previously the fall-through stub came last: as soon as a window contains a conditional branch out (e.g. ldxr; cmp; b.ne out; stxr; cbnz), a successful stxr fell into the
-@@ -726,7 +737,7 @@
+@@ -726,7 +747,7 @@
          for x in seg: used |= regs_in(x)
      S, T = pick(used)
      start = here()
@@ -163,7 +189,7 @@
      pos, at = {}, here()
      for seg, _ in parts:
          for x in seg: pos[x.address] = at; at += 4
-@@ -936,8 +947,8 @@
+@@ -936,8 +957,8 @@
      start first). So SIGTERM stays blocked across the fork, which keeps it pending in the kernel, until a worker has the default action back and that action can end it.
      In this process it acts only while waiting for the results: the handler's sys.exit raised during the pool's teardown could stop a terminate halfway and leave workers behind, or be discarded
      in a destructor."""
@@ -174,7 +200,7 @@
      def worker_signals():
          signal.signal(signal.SIGTERM, signal.SIG_DFL)
          signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
-@@ -1896,6 +1907,7 @@
+@@ -1896,6 +1917,7 @@
      for src_ in (os.path.abspath(__file__), nso.__file__, nso_code.__file__, nso_asm.__file__, nso_syms.__file__, ue_cvar.__file__, ue_malloc.__file__, fps_target.__file__, monolith_fps.__file__, ue_fixed_rate.__file__, unity_fps.__file__, unity_bucket.__file__, ue_region.__file__, ue_ring.__file__, snowdrop_pools.__file__, os.path.join(os.path.dirname(ue_malloc.__file__), 'loader_census.py'), *PATCH_FILES): f.write(hashlib.sha256(open(src_, 'rb').read()).hexdigest() + f'  {os.path.relpath(os.path.abspath(src_), os.path.dirname(os.path.abspath(__file__)))}\n')
  with open(P('fixups.tsv'), 'w') as f:
      f.write(f'# PATCH_OFF\t{PATCH_OFF:#x}\n# KEY_PAGE_OFF\t{KEY_PAGE_OFF:#x}\n# KEY_PAGE_SIZE\t0x4000\n# TEXT_END\t{TEXT_END:#x}\n# RO_OFF\t{RO_OFF:#x}\n# DATA_OFF\t{DATA_OFF:#x}\n')

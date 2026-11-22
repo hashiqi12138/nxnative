@@ -93,6 +93,7 @@ unsigned mtl_cpu_tex_count(void) { return 0; }
 uint64_t mtl_pkg_edge_skips(void) { return 0; }
 void mtl_sm_stats(uint64_t *a, uint64_t *b, uint64_t *c) { *a = *b = *c = 0; }
 void mtl_fb_stats(uint64_t *a, uint64_t *b, uint64_t *c, uint64_t *d) { *a = *b = *c = *d = 0; }
+void mtl_dbnd_stats(uint64_t *a, uint64_t *b, uint64_t *c, uint64_t *d) { *a = *b = *c = *d = 0; }   // VK replays depth bounds without the Metal encoder's stats
 void mtl_dispatch_barrier_stats(uint64_t *a, uint64_t *b, uint64_t *c, uint64_t *d) { *a = *b = *c = *d = 0; }
 void mtl_hybrid_stats(uint64_t *a, uint64_t *b, uint64_t *c) { *a = *b = *c = 0; }
 void mtl_gsb_stats(uint64_t *a, uint64_t *b) { *a = *b = 0; }
