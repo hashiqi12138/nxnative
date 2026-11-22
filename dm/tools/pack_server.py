@@ -123,13 +123,17 @@ def main():
                     try:
                         self.wfile.write(buf)
                         sent += len(buf)
-                    except (BrokenPipeError, ConnectionResetError):
+                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                         # the app went away (a killed round, a resume): stop quietly, the .part keeps what
-                        # arrived and the next request continues from there
+                        # arrived and the next request continues from there. ConnectionAbortedError is
+                        # Windows' own "your host software aborted an established connection" (WinError
+                        # 10053), which a 17.65 GB body over WiFi hits whenever the phone drops the socket
+                        # mid-send; without it the handler's traceback went to stderr and a supervisor read
+                        # the noise as a failed run.
                         return
                 try:
                     self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError):
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                     return
                 if sent != body_len:
                     sys.stderr.write('pack_server: sent %d of %d bytes for %s\n' % (sent, body_len, self.path))

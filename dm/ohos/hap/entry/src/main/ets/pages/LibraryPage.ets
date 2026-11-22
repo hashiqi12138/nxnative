@@ -500,11 +500,11 @@ struct LibraryPage {
   }
 
   /** Delete one game's tree after the confirm. */
-  private doDelete(titleId: string): void {
+  private async doDelete(titleId: string): Promise<void> {
     const ctx = this.getUIContext().getHostContext();
     const files: string = ctx?.filesDir ?? '';
     const g: GameEntry | undefined = this.games.find((x: GameEntry): boolean => x.titleId === titleId);
-    const ok: boolean = deleteGame(files, titleId);
+    const ok: boolean = await deleteGame(files, titleId);
     console.info(`library: delete ${titleId} -> ${ok}`);
     this.detailVisible = false;
     this.detailGame = null;

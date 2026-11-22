@@ -304,6 +304,17 @@ def emit_key_addr(reg, kind):
 
 def emit_slot_addr(base, key_reg, kind):
     emit_key_addr(key_reg, kind); emit(ADDR(base, base, key_reg))
+def emit_slot_load(rd, temp, kind, wide=True):
+    """rd = thread slot <kind>, using temp as the address and rd itself as the key register (rd's old value must be dead).
+    The thread pointer comes from emit_tp's target: tpidrro_el0 on apple, tpidr_el0 + TPOFF on ohos (musl leaves tpidrro_el0
+    at 0 for user code, so the apple form would read the slot at address 0 — Tears of the Kingdom's MeshCode thread died at
+    0x8 exactly there)."""
+    if TARGET == 'ohos':
+        emit(MRS_TPIDR(temp)); emit_key_addr(rd, 'TPOFF'); emit(ADDR(temp, temp, rd))
+    else:
+        emit(MRS_TPIDRRO(temp))
+    emit_slot_addr(temp, rd, kind)
+    emit(LDRX(rd, temp) if wide else 0xB9400000 | (temp << 5) | rd)  # ldr wD,[xT] zero-extends the result
 
 # ---- Encoders: dm/tools/nso_asm.py (imported above) ----
 
@@ -419,8 +430,7 @@ def site_select(ins, args, temp):
     rd, other, other_cond, wide = args
     start, skip = here(), len(patch)
     emit(NOP)  # filled with the conditional branch once the other arm's address is known
-    emit(MRS_TPIDRRO(temp)); emit_slot_addr(temp, rd, 'K18')
-    emit(LDRX(rd, temp) if wide else 0xB9400000 | (temp << 5) | rd)  # ldr wD,[xT] zero-extends the result
+    emit_slot_load(rd, temp, 'K18', wide)
     emit(BX(here(), ins.address + 4))
     struct.pack_into('<I', patch, skip, BEQ(start, here()) | other_cond)
     if not wide or rd != other: emit(MOVX(rd, other) if wide else MOVX(rd, other) & 0x7FFFFFFF)

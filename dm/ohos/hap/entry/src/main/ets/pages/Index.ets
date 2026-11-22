@@ -275,8 +275,8 @@ struct Index {
   }
 
   /** Delete one library entry (its data only; saves live apart). */
-  private removeGame(filesDir: string, titleId: string): void {
-    const ok: boolean = deleteGame(filesDir, titleId);
+  private async removeGame(filesDir: string, titleId: string): Promise<void> {
+    const ok: boolean = await deleteGame(filesDir, titleId);
     dmhost.log(`library: delete ${titleId} -> ${ok}`);
     if (titleId === this.selectedTitle) this.selectedTitle = '';
     this.refreshLibrary(filesDir);
@@ -1048,7 +1048,12 @@ struct Index {
         const why: string = e instanceof Error ? e.message : JSON.stringify(e);
         this.importing = false;
         dmhost.log('staging: the loopback pack import failed: ' + why);
-        if (tmp.length) { try { fs.unlinkSync(tmp); } catch (e2) { } }
+        if (tmp.length) {
+          try { fs.unlinkSync(tmp); } catch (e2) { }
+          // 404: the server holds no pack at all. Keeping the partial file only makes every later launch resume it
+          // into the same 404 (measured: a 214 MB .part left "downloading 214 / 214 MB" on the panel each start).
+          if (why.indexOf('404') >= 0) { try { fs.unlinkSync(tmp + '.part'); } catch (e2) { } }
+        }
       }
     }
     if (!text.length) {
@@ -1393,6 +1398,12 @@ struct Index {
       this.pendingEditOnLoad = false;
       this.isGame = true;
       this.status = 'dm: game';
+      // A failed loopback staging attempt can leave the panel up with its last progress line (measured: a cached
+      // 214 MB .part, GET /pack.nxpk 404, "downloading 214 / 214 MB" stayed over the running game). The game is
+      // starting now, so the library panel goes away whatever staging left behind.
+      this.showLauncher = false;
+      this.importing = false;
+      this.importNote = '';
       dmhost.log('starting the game');
       this.loadPadConfig(root);   // P1.4: the pack's default layout and the user's saved layout (async, draws when loaded)
       dmhost.startGame(root, files + '/save', cache);

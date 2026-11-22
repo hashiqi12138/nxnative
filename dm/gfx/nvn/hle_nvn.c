@@ -140,6 +140,7 @@ NVN(nvnDeviceInitialize, NVNboolean, NVNdevice *d, const NVNdeviceBuilder *b) {
     o->origin = NVN_WINDOW_ORIGIN_MODE_LOWER_LEFT; mtl_set_origin_lower_left(1);   // NVN's default; every game so far switched to upper-left right away, Link's Awakening keeps it
     mtl_set_depth_zero(0);   // NVN's default depth mode: near = -w (GL)
     OLOG("DeviceInitialize %p flags=%#x", (void *)d, o->flags);
+    { static int dn; if (dn < 8) { dn++; LOG("[nvn] DeviceInitialize %p flags=%#x caller=%p", (void *)d, o->flags, __builtin_return_address(0)); } }
     return 1;
 }
 NVN(nvnDeviceFinalize, void, NVNdevice *d) { ((dev_t_ *)d)->magic = 0; }
@@ -972,7 +973,9 @@ NVN(nvnQueueInitialize, NVNboolean, NVNqueue *q, const NVNqueueBuilder *b) {
     // not rewrite that queue state (Xenoblade 2 creates its queue first).
     *(queue_t *)q = (queue_t){MAGIC('Q', 'U', 'E', 'U'), d, 0,
                             !d || ((const dev_t_ *)d)->origin == NVN_WINDOW_ORIGIN_MODE_LOWER_LEFT, nvn_new_serial()};
-    OLOG("QueueInitialize %p", (void *)q); return 1;
+    OLOG("QueueInitialize %p", (void *)q);
+    { static int qn; if (qn < 8) { qn++; LOG("[nvn] QueueInitialize %p dev=%p caller=%p", (void *)q, (void *)d, __builtin_return_address(0)); } }
+    return 1;
 }
 NVN(nvnQueueFinalize, void, NVNqueue *q) {
     nvn_queue_forget((queue_t *)q);
