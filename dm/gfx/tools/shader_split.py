@@ -51,6 +51,7 @@
 #   · Unreal Engine 3 (Batman: Arkham Knight): shader records in its global shader cache (BMSG) and in the packages (the combined shader cache), whose compressed chunks are Oodle blocks decoded by the game's own decoder in the Mac host, see ue3_body and ue3_shaders
 #   · CIVBSF (Firaxis, Civilization VI / VII): indexed NVBC / GLSLC or code/control payloads, see civbsf_shaders
 #   · IPK (Ubisoft's UbiArt, Rayman Legends: Definitive Edition v7, Just Dance 2022 v5): whole GLSLC outputs in the .fxb effect files of bundle_*.ipk (zlib entries), see ipk_shaders
+#   · NXSD (TETRIS THE GRAND MASTER 4): descriptor-referenced NVN control sections and code areas, one stage per entry; see nxsd_shaders
 # Code area: 0x30 header + (graphics) 0x50 SPH + instructions; header magic 0x12345678 for graphics, 0x12345679 for compute. The control section starts with 0x98761234, +0x704 = code area length,
 #   +0x700 = start of the c1 constant segment within the code area; for compute +0x748 thread group xyz (u32 ×3), +0x754 shared memory bytes (checked one by one against PC reflection on D2R's 22 compute shaders).
 # Stage: BNSH uses the stage slot; BAHS uses bits 10..13 of SPH word 0 (1 vertex 2 hull 3 domain 4 geometry 5 pixel), and a compute header means compute.
@@ -257,6 +258,47 @@ def shn_shaders(d, label):
                 why = check(label, st, ctl, code) if st else 'unknown shader stage'
                 if why: red(f'{label} SHDROUNC variant {v} slot {slot}: {why}')
                 out.append((f'{label}#SHN@{h:#x}#var{v}', st, ctl, code))
+    return out
+
+def nxsd_shaders(d, label):
+    """NXSD v0x100, from ralph303's reader in issue #743: 24-byte descriptors reference 0x880-byte controls and variable-sized code areas in separate regions."""
+    where = f'{label} NXSD'
+    if len(d) < 0x40: red(f'{where}: truncated header')
+    version, size, code32, _, count, ctl_bytes, code_bytes = field(d, '<7I', 4, where)
+    table, ctl_start, code_start = field(d, '<3Q', 0x28, where)
+    if version != 0x100: red(f'{where}: unsupported version {version:#x}')
+    if size != len(d) or code32 != code_start: red(f'{where}: inconsistent file size or code offsets')
+    if not count or ctl_bytes != count * 0x880: red(f'{where}: invalid control count or stride')
+    if table < 0x40 or table + count * 0x18 != ctl_start: red(f'{where}: invalid descriptor table')
+    if ctl_start + ctl_bytes != code_start or code_start + code_bytes != len(d): red(f'{where}: invalid control or code region')
+    controls, ranges = set(), []
+    for i in range(count):
+        entry = f'{where} entry {i}'
+        ctl_rel, _, code_rel, _, _, _ = field(d, '<6I', table + i * 0x18, entry)
+        if ctl_rel % 0x880 or ctl_rel + 0x880 > ctl_bytes or ctl_rel in controls: red(f'{entry}: invalid or duplicate control offset')
+        controls.add(ctl_rel)
+        ctl_at = ctl_start + ctl_rel
+        ncode = field(d, '<I', ctl_at + 0x704, entry)[0]
+        code_end = code_rel + ncode
+        if code_end > code_bytes: red(f'{entry}: code section lies outside the code region')
+        ranges.append((code_rel, code_end, ctl_at))
+    # Validate coverage before copying code: overlapping descriptors can reference the same bytes repeatedly.
+    cursor = 0
+    for start, end, _ in sorted(ranges):
+        if start != cursor: red(f'{where}: code sections overlap or have gaps')
+        cursor = end
+    if cursor != code_bytes: red(f'{where}: code sections do not cover the code region')
+    out = []
+    for i, (start, end, ctl_at) in enumerate(ranges):
+        entry = f'{where} entry {i}'
+        ctl = span(d, ctl_at, 0x880, entry)
+        code = span(d, code_start + start, end - start, entry)
+        st = 'cs' if code[:4] == CS_MAGIC else sph_stage(code) if code[:4] == GFX_MAGIC else None
+        if not st: red(f'{entry}: unknown shader stage')
+        if len(code) < (0x30 if st == 'cs' else 0x80): red(f'{entry}: truncated code header or SPH')
+        why = check(entry, st, ctl, code)
+        if why: red(f'{entry}: {why}')
+        out.append((f'{label}#NXSD@{i}', st, ctl, code))
     return out
 
 def bahs_shaders(d, label):
@@ -3778,21 +3820,32 @@ def scan_blob(d, label, out, depth=0, left=None):
     if NEEDLE in d: out.extend(needle_shaders(d, label))
     if SUMO_NX in d or NVNSH in d: out.extend(sumo_shaders(d, label))
 
-def merge_keys(results):
-    """The shaders of every scanned file, one row per key: (where, stage, control, code), the pairs, and the rows per source group. A key found more than once keeps its first copy,
-    except that the game's own copy (base or update) takes the place of an add-on's (/aoc/<index>/): the game's rows are then the same with or without any DLC, so a registered build
-    packed with another DLC set changes only the DLC rows (build_ipa_from_nsp.py optional_shader_change). PRAGMATA's re_dlc_000.pak holds 45 of the game's shaders, and with the DLC
-    installed the path order (aoc/ before re_chunk_000.pak) gave them to the DLC, so a profile split with it did not build without it (issue #2439)"""
-    keys, pairs, per_src = {}, set(), collections.Counter()
-    for rel, uniq, pr, _ in results:
+def merge_keys(results, registered: dict[tuple[str, str], str] | None = None):
+    """Merge checked copies, keeping a verified registered source when available.
+
+    The game's copy takes precedence over DLC, and play captures cannot take an existing key.
+    Otherwise keep the first copy unless the registered key, stage and source occur in the scan.
+    """
+    keys, preferred, pairs = {}, {}, set()
+    for _, uniq, pr, _ in results:
         pairs |= pr
         for key, v in uniq.items():
-            if key in keys:
-                old = keys[key]
-                if not same_shader(old[2:4], v[2:4]): red(f'key {key} is the same but the control section or code area differs ({v[0]} / {old[0]})')
-                if old[0].startswith('/aoc/') and not v[0].startswith(('/aoc/', '/glslc_play/')): per_src[group(old[0])] -= 1; keys[key] = v; per_src[group(v[0])] += 1
+            if key not in keys:
+                keys[key] = v
                 continue
-            keys[key] = v; per_src[group(v[0])] += 1
+            old = keys[key]
+            if not same_shader(old[2:4], v[2:4]): red(f'key {key} is the same but the control section or code area differs ({v[0]} / {old[0]})')
+            if old[0].startswith('/aoc/') and not v[0].startswith(('/aoc/', '/glslc_play/')):
+                keys[key] = v
+            elif registered and v[0] != old[0] and registered.get((key, STAGE_NAME[v[1]])) == v[0]:
+                preferred.setdefault(key, v)
+    # Choose after checking all copies and resolving ownership, so a preferred
+    # occurrence cannot mask a conflicting copy or override game/DLC precedence.
+    for key, v in preferred.items():
+        old = keys[key]
+        if v[1] == old[1] and not v[0].startswith('/glslc_play/') and v[0].startswith('/aoc/') == old[0].startswith('/aoc/'):
+            keys[key] = v
+    per_src = collections.Counter(group(shader[0]) for shader in keys.values())
     return keys, pairs, per_src
 
 def group(label):
@@ -3814,7 +3867,7 @@ def pixel_input_cover(shaders):
         k = min(ins, key=lambda k: (-len(ins[k] & left), k)); cover.append(k); left -= ins[k]
     return cover
 
-SINGLE_STAGE = ('#GLSLC@', '#VIPER', '#CIVBSF@', '#UE', '#MTSPK@', '#MGFX@', '#NLG', '#PGSO', '#RAW@', '#TFXO@', '#NEEDLE@', '#SNOWDROP@', '#PHYRE@', '#SUMO@', '#NVNSH@', '#D3@', '#SHAD@', '#NXSHADER@')   # sources whose every shader is a program of one stage: GLSLC outputs, Unreal's shader records, MT Framework's shader package (BNSH variations, Unity programs, MSHD and SDF pair theirs);
+SINGLE_STAGE = ('#GLSLC@', '#VIPER', '#CIVBSF@', '#UE', '#MTSPK@', '#MGFX@', '#NLG', '#PGSO', '#RAW@', '#TFXO@', '#NEEDLE@', '#SNOWDROP@', '#PHYRE@', '#SUMO@', '#NVNSH@', '#D3@', '#SHAD@', '#NXSHADER@', '#NXSD@')   # sources whose every shader is a program of one stage: GLSLC outputs, Unreal's shader records, MT Framework's shader package (BNSH variations, Unity programs, MSHD and SDF pair theirs);
 # Unreal Engine 3's shader caches (ue3_shaders, '#UE3@'); MonoGame's effects, whose passes may name no vertex shader and keep the one bound (Celeste: 10 of its 13 effects draw through SpriteBatch's vertex shader, which is in main); Next Level Games'
 # archives (Luigi's Mansion 3 makes 5,317 programs of one stage each at boot); PlatinumGames' shader objects (Bayonetta 3: one stage each, pg_shader); control sections loose in main
 # (Advance Wars 1+2: Re-Boot Camp's Bink shaders, raw_shaders), which no file pairs; YEBIS's effect file (tfxo_shaders); and Sumo's Ninty_NX descriptors and NVNsh records, one stage
@@ -4088,8 +4141,13 @@ def fzlc_shaders(path, label):
 def scan_file_in(args):
     path, rel = args[:2]
     stem, ext = os.path.splitext(path)
+    with open(path, 'rb') as f:
+        head = f.read(16)
+        if head[:4] == b'NXSD':
+            f.seek(0)
+            found = nxsd_shaders(f.read(), '/' + rel)
+            return rel, uniq_keys(found), var_pairs(found), {}
     if ext in ('.data', '.patch', '.debug', '.nxpc') and os.path.exists(stem + '.dict'): return rel, {}, set(), {}   # read through its Next Level Games index (nlg_shaders)
-    with open(path, 'rb') as f: head = f.read(16)
     found = []; trees = {}
     if len(args) > 2 and args[2][0] == EA_ARCHIVE:
         from easf import reader
@@ -4298,32 +4356,36 @@ def nxcx_shaders(f, label):
     with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as d:
         return sead_prim_shaders(d, label) or glslc_shaders(d, label, need=False, offsets=offsets)
 
-def uniq_keys(found, registered_map: str = ''):
+def read_registered_sources(path: str) -> dict[tuple[str, str], str]:
+    if not path: return {}
+    sources = {}
+    try:
+        with open(path, encoding='utf-8') as table:
+            for line in table:
+                fields = line.rstrip('\n').split('\t', 4)
+                if len(fields) == 5:
+                    _, _, stage, key, source = fields
+                    sources[key, stage] = source
+    except FileNotFoundError: pass   # the packer checks that registered tables exist
+    return sources
+
+def uniq_keys(found, registered: dict[tuple[str, str], str] | None = None):
     """Keep the first checked copy, or an equivalent occurrence from the registered map.
 
     Source labels order package records. A registered label can be kept only
     if that exact key, stage and source occur in this scan. Check every copy
     against the first before selecting one for the package.
     """
-    uniq, alternatives = {}, {}
+    uniq, preferred = {}, {}
     for shader in found:
         where, st, ctl, code = shader
         key = skey(ctl, code)
         first = uniq.setdefault(key, shader)
         if first is shader: continue
         if not same_shader(first[2:4], (ctl, code)): red(f'key {key} is the same but the control section or code area differs ({where})')
-        if registered_map and st == first[1] and where != first[0]:
-            alternatives.setdefault((key, STAGE_NAME[st]), {}).setdefault(where, shader)
-    if alternatives:
-        try:
-            with open(registered_map, encoding='utf-8') as table:
-                for line in table:
-                    fields = line.rstrip('\n').split('\t', 4)
-                    if len(fields) != 5: continue
-                    _, _, stage, key, source = fields
-                    by_source = alternatives.get((key, stage))
-                    if by_source is not None and source in by_source: uniq[key] = by_source[source]
-        except FileNotFoundError: pass   # the packer checks that registered tables exist
+        if registered and st == first[1] and where != first[0] and registered.get((key, STAGE_NAME[st])) == where:
+            preferred.setdefault(key, shader)
+    uniq.update(preferred)
     return uniq
 
 def glslc_play(manifest):
@@ -4411,7 +4473,7 @@ def main():
     # The first version's source column is unchanged; later versions are prefixed with their workspace directory name (e.g. v327680): /v327680/Shader/…, main@v327680. They sort after the first version, so existing rows keep their package indices.
     romfs_v, main_v = romfs_l.split(','), main_l.split(',')
     if len(romfs_v) != len(main_v): red(f'{len(romfs_v)} RomFS and {len(main_v)} main: they must pair one to one')
-    registered_map = os.environ.get('DM_SPLIT_REGISTERED_MAP', '')
+    registered = read_registered_sources(os.environ.get('DM_SPLIT_REGISTERED_MAP', ''))
     files, results, common = [], [], None
     for i, (romfs, mainnso) in enumerate(zip(romfs_v, main_v)):
         tag = os.path.basename(os.path.dirname(os.path.abspath(romfs))) if i else ''
@@ -4443,7 +4505,7 @@ def main():
         names = sorted(f for f in os.listdir(ued) if f.endswith('.ushaderbytecode') and not f.startswith('._')) if os.path.isdir(ued) else []   # AppleDouble metadata, not decoded shader archives
         if not names and uepak.unreal_paks(romfs, inline=False, mains=[mainnso]): red(f'the RomFS has Unreal paks, but there are no decoded shader code archives in {ued} (the NSP script writes them)')
         for nm in names: found += ue_shaders(open(os.path.join(ued, nm), 'rb').read(), f'/ue_shaders/{nm}')
-        results.append(('main', uniq_keys(found, registered_map), var_pairs(found), {}))
+        results.append(('main', uniq_keys(found, registered), var_pairs(found), {}))
     for romfs in dlc_v:
         name = os.path.basename(os.path.normpath(romfs))
         tag = 'aoc/' + (name.removesuffix('.img') if is_image(romfs) else name)
@@ -4479,7 +4541,7 @@ def main():
     if len(sys.argv) > 9:
         played, play_pairs = glslc_play(sys.argv[9])
         results.append(('glslc_play', played, set(), {}))   # game files, boot captures and DLC retain ownership of any keys they share with play captures
-    keys, pairs, per_src = merge_keys(results)
+    keys, pairs, per_src = merge_keys(results, registered)
     pairs.update(pair for pair in play_pairs if any(keys[k][0].startswith('/glslc_play/') for k in pair[:2]))
     prog = {(a, b) for a, b, *t in pairs if t} - pairs; pairs = {x for x in pairs if len(x) == 2}
     sp, cover = separable_pairs(keys); pairs |= sp
