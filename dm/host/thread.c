@@ -35,11 +35,36 @@ void guest_thread_init(void) {
 // The thread's kernel ID at TLR[0x110], the one svcGetThreadId answers (hle_thread.c's thr_t id, never 0: 0 is the owner word of an unlocked mutex). Without it every
 // unlocked SDK 22 mutex reads as the caller's and the first heap lock aborts (docs/reference/threads.md)
 void guest_thread_set_id(uint64_t id) { *(uint32_t *)((uint8_t *)dm_tsd_get(g_keytlr) + 0x110) = (uint32_t)id; }
+// The stack region the SDK reads from the current-thread object: nn::os::detail::DebugImplByHorizon::GetCurrentStackInfo takes base/size at object+0x50/+0x58 (or through the
+// object+0x70 pointer, which stays 0 here) and aborts when the current sp is in no registered region. On Horizon the kernel fills those fields; the host's stand-in object starts
+// zeroed, so the main thread's region must be written here (a guest thread's SDK CreateThread overwrites TLR[0x1f8] with its own ThreadType, whose fields the SDK fills itself).
+void guest_thread_set_stack(uint64_t base, uint64_t size) {
+    uint8_t *tlr = dm_tsd_get(g_keytlr);
+    uint8_t *obj = tlr + TLR_SIZE;
+    if (*(void **)(tlr + 0x1f8) != obj) return;   // the SDK already put its own ThreadType there
+    *(uint64_t *)(obj + 0x50) = base;
+    *(uint64_t *)(obj + 0x58) = size;
+}
+// Run fn on another stack (the guest main thread's, carved from the guest stack region): the old sp and the return address ride at the new stack top and are restored when fn returns.
+// fn must not return through a longjmp past this frame; the guest exits through ExitThread / exit, or returns here normally.
+void dm_run_on_stack(void *top, void (*fn)(void));
+__asm__(
+    ".text\n.p2align 2\n.globl " DM_ASM_SYM("dm_run_on_stack") "\n" DM_ASM_PRIVATE " " DM_ASM_SYM("dm_run_on_stack") "\n"
+    DM_ASM_SYM("dm_run_on_stack") ":\n"
+    "    stp x29, x30, [sp, #-16]!\n"
+    "    mov x9, sp\n"
+    "    mov sp, x0\n"
+    "    stp x9, x30, [sp, #-16]!\n"
+    "    blr x1\n"
+    "    ldp x9, x30, [sp], #16\n"
+    "    mov sp, x9\n"
+    "    ldp x29, x30, [sp], #16\n"
+    "    ret\n");
 
 // Gate stacks (entry.S dm_gate): the SVC gate's register frame and the host's SVC handlers run on a stack of the thread's own, never below the guest's sp, as on Horizon, whose kernel leaves a
 // thread's stack untouched during an SVC. Each thread holds a gate slot k: its KGATE slot points to entry.S stub k, which loads dm_gate_top[k]. A guest thread (hle_thread.c thread_main) runs
 // its guest code on the guest stack the SDK gave it, so its gate stack is the rest of its own pthread stack (1 MB), below thread_main's frame: it lives exactly as long as the thread, which
-// exits from inside an SVC (ExitThread → pthread_exit on the gate stack). The guest main thread runs its guest code on this pthread's stack, so it gets a mapped stack, never freed
+// exits from inside an SVC (ExitThread → pthread_exit on the gate stack). The guest main thread runs its guest code on the guest stack region (main.c switches to it), so it gets a mapped stack, never freed
 // (the process ends with it). The slot is released when the thread exits, after which another thread may take it with its own stack.
 #define GATE_SLOTS 1024                 // = entry.S .rept count and dm_gate_top size
 #define GATE_STACK_SIZE (1 << 20)       // = entry.S nesting check

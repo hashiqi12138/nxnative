@@ -4,6 +4,7 @@
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -101,6 +102,22 @@ static napi_value js_log(napi_env env, napi_callback_info info) {
 // tilting the number the whole run. All three are atomics written by the game thread once a second; reading them
 // from the UI thread needs no lock. Returns zeros before the first second of frames has closed.
 void dm_fps_read(int *now, double *avg_ms, int *avg10);   // gfx_vk_present_ohos.c
+void dm_ohos_audio_set_volume(int vol_0_100);   // audiotoolbox_ohos.c
+void dm_ohos_audio_set_muted(int muted);        // audiotoolbox_ohos.c
+static napi_value js_set_audio_volume(napi_env env, napi_callback_info info) {
+    napi_value argv[1] = {0}; size_t argc = 1; napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+    napi_value undef; napi_get_undefined(env, &undef);
+    if (argc >= 1) dm_ohos_audio_set_volume((int)arg_num(env, argv[0]));
+    return undef;
+}
+static napi_value js_set_audio_muted(napi_env env, napi_callback_info info) {
+    napi_value argv[1] = {0}; size_t argc = 1; napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+    napi_value undef; napi_get_undefined(env, &undef);
+    bool muted = false;
+    if (argc >= 1 && argv[0]) napi_get_value_bool(env, argv[0], &muted);
+    dm_ohos_audio_set_muted(muted ? 1 : 0);
+    return undef;
+}
 static napi_value js_get_fps(napi_env env, napi_callback_info info) {
     (void)info;
     int now = 0; double avg_ms = 0; int avg10 = 0;
@@ -125,7 +142,7 @@ static napi_value dmhost_init(napi_env env, napi_value exports) {
     struct { const char *name; napi_callback fn; } fns[] = {
         {"setSurfaceId", js_set_surface}, {"surfaceLost", js_surface_lost}, {"startGame", js_start},
         {"startDemo", js_demo}, {"stopDemo", js_demo_stop}, {"setPad", js_set_pad}, {"log", js_log},
-        {"getFps", js_get_fps},
+        {"getFps", js_get_fps}, {"setAudioVolume", js_set_audio_volume}, {"setAudioMuted", js_set_audio_muted},
     };
     for (size_t i = 0; i < sizeof fns / sizeof fns[0]; i++) {
         napi_value fn = NULL;

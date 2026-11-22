@@ -28,6 +28,17 @@ struct dm_audio_unit {
 static struct dm_audio_component g_output;
 enum { HOLD_MAX_S = 60 };
 
+// Lock-free master gain and mute set from ArkTS (SettingsPage and the in-game drawer, via napi_bridge.c).
+static _Atomic int g_ohos_audio_vol = 100;   // 0..100
+static _Atomic int g_ohos_audio_muted = 0;   // 0 or 1
+
+void dm_ohos_audio_set_volume(int vol_0_100) {
+    if (vol_0_100 < 0) vol_0_100 = 0;
+    if (vol_0_100 > 100) vol_0_100 = 100;
+    atomic_store(&g_ohos_audio_vol, vol_0_100);
+}
+void dm_ohos_audio_set_muted(int muted) { atomic_store(&g_ohos_audio_muted, muted ? 1 : 0); }
+
 AudioComponent AudioComponentFindNext(AudioComponent after, const AudioComponentDescription *d) {
     return !after && d && d->componentType == kAudioUnitType_Output ? &g_output : NULL;
 }
@@ -68,6 +79,20 @@ static OH_AudioData_Callback_Result on_write(OH_AudioRenderer *r, void *ud, void
     struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
     AudioTimeStamp ts = {.mSampleTime = (Float64)atomic_fetch_add(&u->sample_time, (uint64_t)frames), .mHostTime = (UInt64)t.tv_sec * 1000000000ull + (UInt64)t.tv_nsec};
     if (u->cb.inputProc(u->cb.inputProcRefCon, &fl, &ts, 0, (UInt32)frames, &bl)) memset(audio, 0, (size_t)bytes);
+    {   // the player's master volume / mute (napi_bridge.c's setAudioVolume / setAudioMuted)
+        int muted = atomic_load(&g_ohos_audio_muted), vol = atomic_load(&g_ohos_audio_vol);
+        if (muted || vol <= 0) {
+            memset(audio, 0, (size_t)bytes);
+        } else if (vol < 100) {
+            if (u->fmt.mFormatFlags & kAudioFormatFlagIsFloat) {
+                float g = (float)vol * 0.01f, *fs = (float *)audio; int nf = bytes / (int)sizeof(float);
+                for (int i = 0; i < nf; i++) fs[i] *= g;
+            } else {
+                int16_t *ps = (int16_t *)audio; int ns = bytes / (int)sizeof(int16_t);
+                for (int i = 0; i < ns; i++) ps[i] = (int16_t)(((int32_t)ps[i] * vol) / 100);
+            }
+        }
+    }
     // DM_AUDIO_PROBE=1: peak amplitude of the PCM handed to the renderer, every 2000 callbacks (~10 s). Tells whether the
     // host produces sound (peak > 0) or silence (peak 0), independent of the device volume / route / focus.
     { static _Atomic uint64_t pn; static int probe = -1;

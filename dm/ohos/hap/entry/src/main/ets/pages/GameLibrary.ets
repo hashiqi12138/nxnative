@@ -356,26 +356,6 @@ function readPackName(root: string): string {
 }
 
 /**
- * The pack's size as its own manifest records it (nx2a-data.json's "bytes"), or 0 when it has none.
- *
- * The library used to learn the size by walking the folder, with a 60,000-entry budget. Tears of the Kingdom
- * imports 304,270 files, and the walk alone blocked the UI thread past the 6 s limit the system kills a foreground
- * app for (measured: PROCESS_KILL reason=THREAD_BLOCK_6S in treeSize from listGames). The container's manifest
- * already carries the exact number, so a pack does not need a walk at all; the walk stays as a fallback for a
- * folder that has no manifest (a hand-copied build).
- */
-function readPackBytes(root: string): number {
-  try {
-    const text: string = fs.readTextSync(root + '/nx2a-data.json');
-    const j: object = JSON.parse(text) as object;
-    const n = (j as Record<string, Object>)['bytes'];
-    if (typeof n === 'number' && n > 0) return n;
-  } catch (e) {
-  }
-  return 0;
-}
-
-/**
  * List the installed games, newest stamp first.
  *
  * Each game's directory carries a .meta.json written at import time, so a load costs one read per game instead of
@@ -429,11 +409,10 @@ export function listGames(filesDir: string): GameEntry[] {
         writeMeta(root, stamp, name, size, hasData, icon);
       }
     } else {
-      // no cache, or it describes a different pack: the pack's own manifest names the size, so no walk
+      // no cache, or it describes a different pack: walk once and remember the answer
       hasData = isStartable(root);
       name = readPackName(root);
-      size = readPackBytes(root);
-      if (size === 0) size = treeSize(root, 3000);   // no manifest: a bounded walk, small enough not to trip the watchdog
+      size = treeSize(root, 60000);
       icon = '';
       try {
         if (fs.accessSync(root + '/icon.jpg')) icon = 'icon.jpg';
@@ -465,7 +444,7 @@ export function listGames(filesDir: string): GameEntry[] {
 }
 
 /** Delete one game's data. Returns false when the directory was not there. */
-export async function deleteGame(filesDir: string, titleId: string): Promise<boolean> {
+export function deleteGame(filesDir: string, titleId: string): boolean {
   const root: string = gamesDir(filesDir) + '/' + titleId;
   let isDir: boolean = false;
   try {
@@ -474,48 +453,11 @@ export async function deleteGame(filesDir: string, titleId: string): Promise<boo
     return false;
   }
   if (!isDir) return false;
-  // asynchronous: a 304,266-file pack (Tears of the Kingdom) takes far longer than the 6 s a blocked thread is
-  // allowed, and the system killed the app for it
-  await removeTreeAsync(root);
+  removeTree(root);
   try {
     return !fs.accessSync(root);
   } catch (e) {
     return true;
-  }
-}
-
-/** Remove a directory tree bottom-up, yielding every 256 entries (a sync walk of 304k files trips the watchdog). */
-export async function removeTreeAsync(path: string): Promise<boolean> {
-  let isDir: boolean = false;
-  try {
-    isDir = fs.statSync(path).isDirectory();
-  } catch (e) {
-    return false;
-  }
-  if (!isDir) {
-    try {
-      fs.unlinkSync(path);
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-  let names: string[] = [];
-  try {
-    names = fs.listFileSync(path);
-  } catch (e) {
-    names = [];
-  }
-  let done: number = 0;
-  for (const name of names) {
-    await removeTreeAsync(path + '/' + name);
-    if ((++done & 0xff) === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  }
-  try {
-    fs.rmdirSync(path);
-    return true;
-  } catch (e) {
-    return false;
   }
 }
 

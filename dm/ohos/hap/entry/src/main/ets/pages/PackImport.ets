@@ -117,11 +117,6 @@ export async function importPack(path: string, root: string, info: PackInfo,
     const hb = new ArrayBuffer(BLOCK0);
     const hb8 = new Uint8Array(hb);
     let p = HEADER_SIZE;
-    // One synchronous readSync per member, on the UI thread: Tears of the Kingdom has 304,266 of them, and the
-    // whole scan used to run in one stretch. The system kills a foreground app whose thread blocks for 6 s
-    // (measured: PROCESS_KILL reason=THREAD_BLOCK_6S in importPack at tarString), so yield every 1,024 members.
-    // The main loop below already yields per 5 files for the same reason.
-    let scanned = 0;
     while (p - HEADER_SIZE < info.tarSize) {
       const got = fs.readSync(scan.fd, hb, { offset: p, length: BLOCK0 });
       if (got !== BLOCK0) break;
@@ -134,12 +129,11 @@ export async function importPack(path: string, root: string, info: PackInfo,
       present.add(full.split('/')[0]);
       const sz = tarOctal(hb8, 124, 12);
       p += BLOCK0 + sz + ((BLOCK0 - (sz % BLOCK0)) % BLOCK0);
-      if ((++scanned & 0x3ff) === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
     fs.closeSync(scan);
   }
   for (const owned of ['mods', 'RomFS', 'aoc']) {
-    if (present.has(owned)) await removeTreeAsync(root + '/' + owned);
+    if (present.has(owned)) removeTree(root + '/' + owned);
   }
   try {
     fs.mkdirSync(root, true);
@@ -281,44 +275,6 @@ export function removeTree(path: string): boolean {
   }
   for (const name of names) {
     removeTree(path + '/' + name);
-  }
-  try {
-    fs.rmdirSync(path);
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-/**
- * removeTree for a pack's own folders (importPack): the synchronous version removes 304,266 files of Tears of the
- * Kingdom in one stretch, and the system kills a thread blocked for 6 s. Same walk, with a yield every 256 entries.
- */
-async function removeTreeAsync(path: string): Promise<boolean> {
-  let isDir: boolean = false;
-  try {
-    isDir = fs.statSync(path).isDirectory();
-  } catch (e) {
-    return false;
-  }
-  if (!isDir) {
-    try {
-      fs.unlinkSync(path);
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-  let names: string[] = [];
-  try {
-    names = fs.listFileSync(path);
-  } catch (e) {
-    names = [];
-  }
-  let done: number = 0;
-  for (const name of names) {
-    await removeTreeAsync(path + '/' + name);
-    if ((++done & 0xff) === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
   try {
     fs.rmdirSync(path);

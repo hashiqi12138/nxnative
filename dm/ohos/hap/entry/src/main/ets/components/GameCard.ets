@@ -41,7 +41,7 @@ export struct GameCard {
   /** The cover's edge length; the portrait list passes a smaller value. */
   @Prop coverSize: number = Size.cardCoverLandscape;
   /** The current state. */
-  @State state: CardState = CardState.Idle;
+  @Prop state: CardState = CardState.Idle;
   /**
    * The game's facts, most telling first (S5, GameBadges.badgesFor). A list rather than a state value: a game can
    * be complete and kept and carry a save at the same time, and a single CardState could only ever say one of them.
@@ -202,10 +202,19 @@ export struct GameCard {
       .width(this.coverSize)
       .height(this.coverSize)
       .flexShrink(0)
-      .borderRadius(Radius.lg)
+      .borderRadius(Radius.cover)
       .clip(true)
+      .border({
+        width: this.state === CardState.Focus || this.state === CardState.Verifying ? Size.focusRing : 1,
+        color: this.state === CardState.Verifying ? Semantic.warning
+          : (this.state === CardState.Focus ? TextToken.primary : Semantic.borderSubtle),
+        radius: Radius.cover
+      })
+      .shadow(this.state === CardState.Focus
+        ? { radius: 30, color: CoverPalette.rgba(CoverPalette.forTitle(this.titleId), 0.50), offsetX: 0, offsetY: 6 }
+        : { radius: 10, color: 'rgba(0,0,0,0.32)', offsetX: 0, offsetY: 4 })
       // an incomplete pack reads as dimmed: the cover still shows what the game is, the state line says why
-      .opacity(this.state === CardState.Incomplete ? 0.4 : 1)
+      .opacity(this.state === CardState.Incomplete ? 0.42 : 1)
 
       // ---- caption, centred under the cover ----
       Text(this.name.length > 0 ? this.name : this.titleId)
@@ -230,18 +239,10 @@ export struct GameCard {
     .alignItems(HorizontalAlign.Center)
     // A white ring stays out of every game's way; the glow carries the game's own hue, so focus changes the
     // room's light rather than painting the same pink over every title.
-    .border({
-      width: this.state === CardState.Focus || this.state === CardState.Verifying ? Size.focusRing : 0,
-      color: this.state === CardState.Verifying ? Semantic.warning : TextToken.primary,
-      radius: Radius.lg
-    })
     .scale({
-      x: this.state === CardState.Focus ? 1.08 : (this.state === CardState.Press ? Motion.scalePress : 1),
-      y: this.state === CardState.Focus ? 1.08 : (this.state === CardState.Press ? Motion.scalePress : 1)
+      x: this.state === CardState.Focus ? Motion.scaleFocus : (this.state === CardState.Press ? Motion.scalePress : 1),
+      y: this.state === CardState.Focus ? Motion.scaleFocus : (this.state === CardState.Press ? Motion.scalePress : 1)
     })
-    .shadow(this.state === CardState.Focus
-      ? { radius: 32, color: CoverPalette.rgba(CoverPalette.forTitle(this.titleId), 0.45), offsetX: 0, offsetY: 0 }
-      : { radius: 0, color: 'rgba(0,0,0,0)', offsetX: 0, offsetY: 0 })
     .animation({ duration: Motion.duration(Motion.base), curve: Motion.curve })
     .onClick(() => {
       if (this.state === CardState.Incomplete || this.state === CardState.Launching) return;

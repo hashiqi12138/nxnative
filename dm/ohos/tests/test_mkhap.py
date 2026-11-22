@@ -148,14 +148,14 @@ def test_hvigor_runs_once_without_data(sandbox, monkeypatch):
     assert '--mode' in hv[0] and 'module' in hv[0]
 
 
-def test_the_pad_default_comes_from_the_profile(sandbox, monkeypatch):
-    _tmp, _src, _out, game, build, _calls = sandbox
-    run_mkhap(monkeypatch, ['--game', game, '--keep-build'], sandbox)
+def test_no_game_leaves_no_per_game_files_in_the_hap(sandbox, monkeypatch):
+    """A HAP built without --game is the same for every game: no pad_default.json is written (the app reads the
+    pack's profile.tsv at run time) and the entry module is still assembled."""
+    _tmp, _src, _out, _game, build, calls = sandbox
+    run_mkhap(monkeypatch, ['--keep-build'], sandbox)   # the fake hvigor makes no hap, so the exit code is not the point
     p = build / 'entry' / 'src' / 'main' / 'resources' / 'rawfile' / 'pad_default.json'
-    assert p.is_file()
-    got = json.loads(p.read_text(encoding='utf-8'))
-    assert got['layout'] in ('full', 'touch')
-    assert isinstance(got['handheld'], bool)
+    assert not p.exists()
+    assert any('assembleHap' in ' '.join(c) for c in calls)
 
 
 # ---- a build with --data: the module split ----

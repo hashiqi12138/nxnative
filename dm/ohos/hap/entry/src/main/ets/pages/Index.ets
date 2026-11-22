@@ -38,6 +38,8 @@ const DM_BTN_A: number = 1 << 0;
 const DM_BTN_B: number = 1 << 1;
 const DM_BTN_X: number = 1 << 2;
 const DM_BTN_Y: number = 1 << 3;
+const DM_BTN_L3: number = 1 << 4;
+const DM_BTN_R3: number = 1 << 5;
 const DM_BTN_L: number = 1 << 6;
 const DM_BTN_R: number = 1 << 7;
 const DM_BTN_ZL: number = 1 << 8;
@@ -51,15 +53,16 @@ const DM_BTN_DOWN: number = 1 << 15;
 const DM_STICK_MAX: number = 32767;
 
 // Stick zone centers/radii, normalized to the overlay's width (height follows the aspect ratio; hit tests are circular in vp space).
-const LS_CX: number = 0.18;
-const LS_CY: number = 0.72;
-const LS_R: number = 0.15;
-const RS_CX: number = 0.60;
-const RS_CY: number = 0.66;
-const RS_R: number = 0.10;
+// Redesigned ergonomic 20:9 thumb-arc stick zones (zero overlap with ABXY or centre viewport)
+const LS_CX: number = 0.11;
+const LS_CY: number = 0.52;
+const LS_R: number = 0.082;
+const RS_CX: number = 0.80;
+const RS_CY: number = 0.78;
+const RS_R: number = 0.072;
 
 // The overlay's touch zones. Priority = array order (first match wins), sticks last so a finger aimed at a button never grabs a stick.
-enum PadRole { LS, RS, A, B, X, Y, L, R, ZL, ZR, Plus, Minus, Up, Down, Left, Right }
+enum PadRole { LS, RS, A, B, X, Y, L, R, ZL, ZR, Plus, Minus, Up, Down, Left, Right, L3, R3 }
 interface PadZone {
   role: PadRole;
   cx: number;
@@ -112,20 +115,22 @@ struct Index {
   // The zones are the drawn/hit geometry. cx/cy are normalized to the overlay (0..1), r to the width; the y arm is r * aspect.
   // Zones are mutable here: the user's layout (edit mode) moves them, and preferences persist the result per game.
   private zones: PadZone[] = [
-    { role: PadRole.A, cx: 0.86, cy: 0.70, r: 0.050, bit: DM_BTN_A, label: 'A' },
-    { role: PadRole.B, cx: 0.77, cy: 0.79, r: 0.050, bit: DM_BTN_B, label: 'B' },
-    { role: PadRole.X, cx: 0.77, cy: 0.61, r: 0.050, bit: DM_BTN_X, label: 'X' },
-    { role: PadRole.Y, cx: 0.68, cy: 0.70, r: 0.050, bit: DM_BTN_Y, label: 'Y' },
-    { role: PadRole.ZL, cx: 0.24, cy: 0.20, r: 0.040, bit: DM_BTN_ZL, label: 'ZL' },
-    { role: PadRole.ZR, cx: 0.76, cy: 0.20, r: 0.040, bit: DM_BTN_ZR, label: 'ZR' },
-    { role: PadRole.L, cx: 0.30, cy: 0.28, r: 0.040, bit: DM_BTN_L, label: 'L' },
-    { role: PadRole.R, cx: 0.70, cy: 0.28, r: 0.040, bit: DM_BTN_R, label: 'R' },
-    { role: PadRole.Plus, cx: 0.92, cy: 0.42, r: 0.036, bit: DM_BTN_PLUS, label: '+' },
-    { role: PadRole.Minus, cx: 0.08, cy: 0.42, r: 0.036, bit: DM_BTN_MINUS, label: '-' },
-    { role: PadRole.Up, cx: 0.50, cy: 0.16, r: 0.035, bit: DM_BTN_UP, label: 'UP' },
-    { role: PadRole.Down, cx: 0.50, cy: 0.26, r: 0.035, bit: DM_BTN_DOWN, label: 'DN' },
-    { role: PadRole.Left, cx: 0.44, cy: 0.21, r: 0.035, bit: DM_BTN_LEFT, label: 'LT' },
-    { role: PadRole.Right, cx: 0.56, cy: 0.21, r: 0.035, bit: DM_BTN_RIGHT, label: 'RT' },
+    { role: PadRole.A, cx: 0.94, cy: 0.49, r: 0.038, bit: DM_BTN_A, label: 'A' },
+    { role: PadRole.B, cx: 0.89, cy: 0.60, r: 0.038, bit: DM_BTN_B, label: 'B' },
+    { role: PadRole.X, cx: 0.89, cy: 0.38, r: 0.038, bit: DM_BTN_X, label: 'X' },
+    { role: PadRole.Y, cx: 0.84, cy: 0.49, r: 0.038, bit: DM_BTN_Y, label: 'Y' },
+    { role: PadRole.ZL, cx: 0.065, cy: 0.14, r: 0.036, bit: DM_BTN_ZL, label: 'ZL' },
+    { role: PadRole.ZR, cx: 0.935, cy: 0.14, r: 0.036, bit: DM_BTN_ZR, label: 'ZR' },
+    { role: PadRole.L, cx: 0.075, cy: 0.26, r: 0.033, bit: DM_BTN_L, label: 'L' },
+    { role: PadRole.R, cx: 0.925, cy: 0.26, r: 0.033, bit: DM_BTN_R, label: 'R' },
+    { role: PadRole.Plus, cx: 0.58, cy: 0.08, r: 0.028, bit: DM_BTN_PLUS, label: '+' },
+    { role: PadRole.Minus, cx: 0.42, cy: 0.08, r: 0.028, bit: DM_BTN_MINUS, label: '−' },
+    { role: PadRole.Up, cx: 0.16, cy: 0.71, r: 0.031, bit: DM_BTN_UP, label: '▲' },
+    { role: PadRole.Down, cx: 0.16, cy: 0.89, r: 0.031, bit: DM_BTN_DOWN, label: '▼' },
+    { role: PadRole.Left, cx: 0.115, cy: 0.80, r: 0.031, bit: DM_BTN_LEFT, label: '◀' },
+    { role: PadRole.Right, cx: 0.205, cy: 0.80, r: 0.031, bit: DM_BTN_RIGHT, label: '▶' },
+    { role: PadRole.L3, cx: 0.045, cy: 0.86, r: 0.026, bit: DM_BTN_L3, label: 'L3' },
+    { role: PadRole.R3, cx: 0.955, cy: 0.86, r: 0.026, bit: DM_BTN_R3, label: 'R3' },
   ];
   // Sticks stay geometric constants of the layout; only the button zones are user-movable (a moved stick needs its
   // own dead-zone math and is P2 polish; the profile's layout decides whether they show at all).
@@ -137,6 +142,11 @@ struct Index {
   @State editMode: boolean = false;         // layout editing on: touches move zones instead of pressing them
   /** The "leave the game?" question is up: the guest keeps running behind it until the answer is yes. */
   @State confirmExit: boolean = false;
+  @State quickMenuOpen: boolean = false;
+  @State padVisible: boolean = true;
+  @State audioVolume: number = 100;
+  @State audioMuted: boolean = false;
+  @State hudRightCorner: boolean = true;
   /** The settings page asked for the pad editor: startOnce turns edit mode on once the pad has loaded. */
   private pendingEditOnLoad: boolean = false;
   // ---- P2.1 import surface: the launcher shows when the sandbox holds no pack, and the import runs here ----
@@ -230,6 +240,26 @@ struct Index {
    * The kernel reclaims the GPU context, the threads and the descriptors on the way out, which is why this is
    * safer than cancelling a detached thread inside the guest.
    */
+  onBackPress(): boolean {
+    if (this.editMode) {
+      this.exitEditMode(true);
+      return true;
+    }
+    if (this.quickMenuOpen) {
+      this.quickMenuOpen = false;
+      return true;
+    }
+    if (this.confirmExit) {
+      this.confirmExit = false;
+      return true;
+    }
+    if (this.isGame) {
+      this.quickMenuOpen = true;
+      return true;
+    }
+    return false;
+  }
+
   private openLibrary(): void {
     if (this.isGame) {
       this.confirmExit = true;
@@ -237,11 +267,11 @@ struct Index {
       dmhost.log('library: exit confirm shown');
       return;
     }
-    // not running a game (the self-test scene): the panel can simply draw over it
-    const ctx = this.getUIContext().getHostContext();
-    this.refreshLibrary(ctx?.filesDir ?? '');
-    this.showLauncher = true;
-    dmhost.log('library: opened over the self-test scene');
+    // not running a game (the self-test scene): the library page owns the library
+    dmhost.log('library: returning to the library page');
+    router.replaceUrl({ url: 'pages/LibraryPage' }).catch((e: Error) => {
+      dmhost.log(`library: return failed: ${e.message}`);
+    });
   }
 
   /** End the process so the next launch starts on the library. */
@@ -275,8 +305,8 @@ struct Index {
   }
 
   /** Delete one library entry (its data only; saves live apart). */
-  private async removeGame(filesDir: string, titleId: string): Promise<void> {
-    const ok: boolean = await deleteGame(filesDir, titleId);
+  private removeGame(filesDir: string, titleId: string): void {
+    const ok: boolean = deleteGame(filesDir, titleId);
     dmhost.log(`library: delete ${titleId} -> ${ok}`);
     if (titleId === this.selectedTitle) this.selectedTitle = '';
     this.refreshLibrary(filesDir);
@@ -293,27 +323,33 @@ struct Index {
   private readonly defaultZones: PadZone[] = this.zones.map((z: PadZone): PadZone =>
     ({ role: z.role, cx: z.cx, cy: z.cy, r: z.r, bit: z.bit, label: z.label }));
 
-  // Load the per-game default (pad_default.json, written by mkhap from the profile's pad_layout/op_mode) and the
-  // user's saved layout on top. The title id is the pack's folder name under files/dm (nx2a-data.json names it too).
+  // Load the game's default pad layout from the pack's profile.tsv and the user's saved layout on top.
   private async loadPadConfig(root: string): Promise<void> {
     const ctx = this.getUIContext().getHostContext();
+    let titleId: string = 'default';
+    // root is games/<titleId> itself: the title is its last segment, not a subdirectory of it
+    const base: string = root.substring(root.lastIndexOf('/') + 1);
+    if (/^[0-9A-F]{16}$/.test(base)) titleId = base;
     try {
-      if (ctx) {
-        // the pack's default: rawfile, the same resourceManager the staging reads
-        const rm = ctx.createModuleContext('entry').resourceManager;
-        const raw: Uint8Array = await rm.getRawFileContent('pad_default.json');
-        const j: object = JSON.parse(new util.TextDecoder().decodeWithStream(raw));
-        const layout = (j as Record<string, Object>)['layout'];
-        if (typeof layout === 'string') this.padLayout = layout;
+      // the game's default: the pack's profile.tsv, the same rows the host reads for the game's constants. Nothing
+      // game-specific is baked into the HAP, so one build starts every game with its own layout.
+      // pad_layout: 0 simple, 1 full, 2 touch (game.py's profile rows)
+      const rows: string[] = fs.readTextSync(root + '/profile.tsv').split('\n');
+      for (const row of rows) {
+        const f: string[] = row.split('\t');
+        if (f.length >= 2 && f[0] === 'pad_layout') {
+          const n: number = parseInt(f[1]);
+          if (n === 0) this.padLayout = 'simple';
+          else if (n === 1) this.padLayout = 'full';
+          else if (n === 2) this.padLayout = 'touch';
+          break;
+        }
       }
     } catch (e) {
-      // no pad_default.json in the pack: keep the compiled-in default ('full')
+      // no profile.tsv (an older pack): keep the compiled-in default ('full')
     }
     try {
       if (ctx) {
-        const names: string[] = fs.listFileSync(root);
-        const tid = names.find((n: string): boolean => /^[0-9A-F]{16}$/.test(n));
-        const titleId = tid !== undefined ? tid : 'default';
         // preferences: the per-game store; the file lives in the app's preferences dir
         this.prefs = await preferences.getPreferences(ctx, 'pad_' + titleId);
         const saved = this.prefs.getSync(Index.PREF_ZONES, '') as string;
@@ -382,6 +418,7 @@ struct Index {
   }
 
   private handleTouch(event: TouchEvent): void {
+    if (this.quickMenuOpen || this.confirmExit) return;
     const ty: number = event.type;
     // Normalize by the component's own vp size (touches are reported in vp). onAreaChange keeps overlayW/H in sync for drawing,
     // but the live value here is authoritative. area.width is a Length (string | number): a percentage string turns into NaN here,
@@ -617,6 +654,37 @@ struct Index {
     }
   }
 
+  private applyGameAudio(): void {
+    dmhost.setAudioVolume(this.audioVolume);
+    dmhost.setAudioMuted(this.audioMuted);
+    const ctx = this.getUIContext().getHostContext();
+    if (!ctx) return;
+    preferences.getPreferences(ctx, 'library').then((lib: preferences.Preferences) => {
+      lib.putSync('audioVolume', this.audioVolume);
+      lib.putSync('audioMuted', this.audioMuted);
+      lib.flush();
+    }).catch(() => {});
+  }
+
+  private loadAppAudioPrefs(): void {
+    const ctx = this.getUIContext().getHostContext();
+    if (!ctx) return;
+    preferences.getPreferences(ctx, 'library').then((lib: preferences.Preferences) => {
+      const av = lib.getSync('audioVolume', 100) as number;
+      const am = lib.getSync('audioMuted', false) as boolean;
+      const fv = lib.getSync('fpsVisible', true) as boolean;
+      if (typeof av === 'number') this.audioVolume = Math.max(0, Math.min(100, av));
+      if (typeof am === 'boolean') this.audioMuted = am;
+      if (typeof fv === 'boolean') this.fpsVisible = fv;
+      dmhost.setAudioVolume(this.audioVolume);
+      dmhost.setAudioMuted(this.audioMuted);
+    }).catch(() => {});
+  }
+
+  aboutToAppear(): void {
+    this.loadAppAudioPrefs();
+  }
+
   aboutToDisappear(): void {
     if (this.fpsTimer >= 0) { clearInterval(this.fpsTimer); this.fpsTimer = -1; }
   }
@@ -629,6 +697,7 @@ struct Index {
     if (w <= 0 || h <= 0) return;
     const c: CanvasRenderingContext2D = this.ctx;
     c.clearRect(0, 0, w, h);
+    if (!this.padVisible && !this.editMode) return;
     const op: number = this.padOpacity;
     const drawSticks: boolean = this.padLayout !== 'touch';
     if (drawSticks) {
@@ -645,13 +714,13 @@ struct Index {
       c.beginPath();
       c.arc(px, py, pr, 0, Math.PI * 2);
       if (down) {
-        c.fillStyle = `rgba(236,72,153,${0.42 * op})`;
+        c.fillStyle = `rgba(244,63,94,${0.46 * op})`;
       } else {
         c.fillStyle = `rgba(255,255,255,${(this.editMode ? 0.18 : 0.10) * op})`;
       }
       c.fill();
       c.strokeStyle = down
-        ? `rgba(236,72,153,${0.95 * op})`
+        ? `rgba(244,63,94,${0.95 * op})`
         : `rgba(255,255,255,${(this.editMode ? 0.80 : 0.35) * op})`;
       c.lineWidth = down ? 2 : 1;
       c.stroke();
@@ -699,9 +768,9 @@ struct Index {
     const pr: number = r * w;
     c.beginPath();
     c.arc(px, py, pr, 0, Math.PI * 2);
-    c.fillStyle = active ? 'rgba(236,72,153,0.14)' : 'rgba(255,255,255,0.08)';
+    c.fillStyle = active ? 'rgba(56,189,248,0.14)' : 'rgba(255,255,255,0.08)';
     c.fill();
-    c.strokeStyle = active ? 'rgba(236,72,153,0.70)' : 'rgba(255,255,255,0.35)';
+    c.strokeStyle = active ? 'rgba(56,189,248,0.82)' : 'rgba(255,255,255,0.35)';
     c.lineWidth = active ? 2 : 1;
     c.stroke();
     // The knob follows the stick value; ly is up-positive, the screen y is down-positive, so the knob's y is inverted.
@@ -712,7 +781,7 @@ struct Index {
     if (active) {
       c.beginPath();
       c.arc(kx, ky, knob + 4, 0, Math.PI * 2);
-      c.fillStyle = 'rgba(236,72,153,0.22)';
+      c.fillStyle = 'rgba(56,189,248,0.26)';
       c.fill();
     }
     c.beginPath();
@@ -862,7 +931,11 @@ struct Index {
           if (done > 80) {
             const infoD: PackInfo = readPackHeader(tmp);
             if (done === 80 + infoD.tarSize) {
-              const curD: string = readStamp(rootArg);
+              // the container names its own game, as the download path below: a cached pack of another title
+              // must not be unpacked over the game this start wants to launch
+              const filesD0: string = this.getUIContext().getHostContext()?.filesDir ?? '';
+              const dstD: string = gamesDir(filesD0) + '/' + infoD.title;
+              const curD: string = readStamp(dstD);
               if (curD.length && curD === infoD.stamp) {
                 dmhost.log('staging: the cached pack matches the sandbox stamp, nothing to do');
                 return 'ok';
@@ -873,12 +946,12 @@ struct Index {
               this.importPct = 0;
               this.importFiles = 0;
               this.importNote = 'unpacking the cached pack';
-              const nC: number = await importPack(tmp, rootArg, infoD, (p: ImportProgress) => {
+              const nC: number = await importPack(tmp, dstD, infoD, (p: ImportProgress) => {
                 this.importFiles = p.files;
                 this.importPct = p.totalBytes > 0 ? Math.min(100, Math.floor(p.bytes * 100 / p.totalBytes)) : 0;
                 this.importNote = p.currentName.length ? p.currentName : 'finishing';
               });
-              writeStamp(rootArg, infoD.stamp);
+              writeStamp(dstD, infoD.stamp);
               this.importing = false;
               this.importNote = '';
               dmhost.log(`staging: unpacked ${nC} files from the cached pack`);
@@ -1048,12 +1121,7 @@ struct Index {
         const why: string = e instanceof Error ? e.message : JSON.stringify(e);
         this.importing = false;
         dmhost.log('staging: the loopback pack import failed: ' + why);
-        if (tmp.length) {
-          try { fs.unlinkSync(tmp); } catch (e2) { }
-          // 404: the server holds no pack at all. Keeping the partial file only makes every later launch resume it
-          // into the same 404 (measured: a 214 MB .part left "downloading 214 / 214 MB" on the panel each start).
-          if (why.indexOf('404') >= 0) { try { fs.unlinkSync(tmp + '.part'); } catch (e2) { } }
-        }
+        if (tmp.length) { try { fs.unlinkSync(tmp); } catch (e2) { } }
       }
     }
     if (!text.length) {
@@ -1398,12 +1466,6 @@ struct Index {
       this.pendingEditOnLoad = false;
       this.isGame = true;
       this.status = 'dm: game';
-      // A failed loopback staging attempt can leave the panel up with its last progress line (measured: a cached
-      // 214 MB .part, GET /pack.nxpk 404, "downloading 214 / 214 MB" stayed over the running game). The game is
-      // starting now, so the library panel goes away whatever staging left behind.
-      this.showLauncher = false;
-      this.importing = false;
-      this.importNote = '';
       dmhost.log('starting the game');
       this.loadPadConfig(root);   // P1.4: the pack's default layout and the user's saved layout (async, draws when loaded)
       dmhost.startGame(root, files + '/save', cache);
@@ -1413,9 +1475,14 @@ struct Index {
       else if (!hasGame) dmhost.log('no game in the sandbox, starting the self-test scene');
       this.isGame = false;
       this.status = staged === 'fail' ? 'dm: self-test (the pack did not stage)' : 'dm: self-test';
-      this.showLauncher = true;   // no data: the launcher is where the user adds a pack (P2.1)
+      this.showLauncher = false;
       dmhost.stopDemo();   // a surface that came back after onDestroy starts the scene once more
       dmhost.startDemo();
+      // No game to start: this page has no library of its own any more, so hand control back to pages/LibraryPage
+      // (replaceUrl: the game page leaves the stack, and the system's back from the library goes to the home screen).
+      router.replaceUrl({ url: 'pages/LibraryPage' }).catch((e: Error) => {
+        dmhost.log(`library: return after a failed start: ${e.message}`);
+      });
     }
     this.started = true;
     this.starting = false;
@@ -1445,94 +1512,42 @@ struct Index {
       // target in its own right, so it works whether the pad guide is on or off.
       // The badge belongs to a running game: it used to draw over the library and the self-test scene as well, where
       // the numbers mean nothing (0 fps on a static page) and the pill covered the library header.
-      if (this.fpsVisible && this.isGame) {
-        Text(`${this.fpsNow} fps · 10s ${this.fpsAvg10} · ${this.fpsAvgMs} ms`)
-          .fontSize(13)
-          .fontColor('#FFFFFF')
-          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-          .backgroundColor('rgba(0,0,0,0.55)')
-          .borderRadius(6)
-          .position({ x: 12, y: 40 })
-          .onClick(() => this.fpsToggle())
-      } else if (this.isGame) {
-        // The closed state keeps a small translucent dot where the badge was: without it, closing the badge would
-        // leave no target on screen to open it again (a closed readout that cannot be reopened is not a feature).
-        Text('•')
-          .fontSize(16)
-          .fontColor('rgba(255,255,255,0.35)')
-          .padding(6)
-          .position({ x: 12, y: 40 })
-          .onClick(() => this.fpsToggle())
+      // Top-center subtle Quick Menu pill during gameplay
+      if (this.isGame && !this.editMode && !this.quickMenuOpen) {
+        Button('菜单')
+          .fontSize(Font.caption)
+          .fontColor(TextToken.primary)
+          .backgroundColor('rgba(13,19,31,0.72)')
+          .border({ width: 1, color: 'rgba(56,189,248,0.55)', radius: Radius.full })
+          .borderRadius(Radius.full)
+          .height(28)
+          .padding({ left: 16, right: 16 })
+          .align(Alignment.Top)
+          .position({ x: '50%', y: 10 })
+          .translate({ x: '-50%' })
+          .onClick(() => { this.quickMenuOpen = true; })
       }
-      // ---- P2.1 launcher: shown when the sandbox holds no pack. The user picks a .nxpk with the system
-      // document picker and the import streams it into the sandbox (one sequential pass, progress below).
-      // ---- P2.1 step 4 / P2.2 skeleton: the game library. Each imported pack lives in its own directory under
-      // files/games/<title-id>/; the native layer takes that directory as its root, so the list is a pure ArkTS
-      // concern. A game row launches it, the trash icon deletes its data (saves live apart), and Add game walks
-      // into the picker import below.
-      if (this.showLauncher) {
-        Column({ space: 12 }) {
-          Row() {
-            Text('Game library').fontSize(20).fontColor('#FFFFFF').layoutWeight(1)
-            if (!this.importing) {
-              Button('Add game (.nxpk)').fontSize(13).height(34)
-                .onClick(() => { this.addGame(); })
-            }
-          }.width(520)
 
-          if (this.importing) {
-            Progress({ value: this.importPct, total: 100, type: ProgressType.Linear })
-              .width(500).height(8)
-            Text(`${this.importPct}%  -  ${this.importFiles} files`).fontSize(13).fontColor('#E0E0E0')
-            Text(this.importNote).fontSize(11).fontColor('#909090')
-              .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).width(500)
-          } else if (this.games.length === 0) {
-            Text('No game data yet. Pick a .nxpk pack to import it; it is copied once and later starts need no import.')
-              .fontSize(13).fontColor('#B0B0B0').textAlign(TextAlign.Center).width(500)
-          } else {
-            List({ space: 8 }) {
-              ForEach(this.games, (g: GameEntry) => {
-                ListItem() {
-                  Row({ space: 12 }) {
-                    Column({ space: 3 }) {
-                      Text(g.name).fontSize(15).fontColor(g.hasData ? '#FFFFFF' : '#FFA0A0')
-                      Text(`${g.titleId}  -  ${humanSize(g.sizeBytes)}  -  ${g.hasData ? 'ready' : 'incomplete'}`)
-                        .fontSize(11).fontColor('#909090')
-                    }.alignItems(HorizontalAlign.Start).layoutWeight(1)
-                    Button('Play').fontSize(13).height(32).width(72)
-                      .enabled(g.hasData)
-                      .onClick(() => {
-                        const ctx2 = this.getUIContext().getHostContext();
-                        this.launchGame(ctx2?.filesDir ?? '', ctx2?.cacheDir ?? '', g.titleId);
-                      })
-                    Button('Delete').fontSize(13).height(32).width(76)
-                      .onClick(() => {
-                        const ctx3 = this.getUIContext().getHostContext();
-                        this.removeGame(ctx3?.filesDir ?? '', g.titleId);
-                      })
-                  }.width(500)
-                }
-              }, (g: GameEntry) => g.titleId)
-            }
-            .width(500)
-            .height(Math.min(260, this.games.length * 58))
-          }
-          if (this.importNote.length && !this.importing) {
-            Text(this.importNote).fontSize(12).fontColor('#FFA0A0')
-              .textAlign(TextAlign.Center).width(500)
-          }
-        }
-        .align(Alignment.Center)
-        .padding(20)
-        .borderRadius(12)
-        .backgroundColor('rgba(18,18,26,0.92)')
+      if (this.fpsVisible && this.isGame && !this.editMode) {
+        Text(`${this.fpsNow} fps · ${this.fpsAvgMs} ms`)
+          .fontSize(12)
+          .fontColor(this.fpsNow >= 25 ? Semantic.success : Semantic.warning)
+          .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+          .backgroundColor('rgba(11,15,23,0.72)')
+          .border({ width: 1, color: Semantic.borderSubtle, radius: Radius.full })
+          .borderRadius(Radius.full)
+          .position(this.hudRightCorner ? { x: '84%', y: 10 } : { x: 14, y: 10 })
+          .onClick(() => this.fpsToggle())
       }
+      // The in-page game library that used to live here is gone: pages/LibraryPage owns the library now, and this
+      // page only owns the game surface. When there is no game to start, startOnce hands control back to it.
       // one line at the bottom, over the surface: what this build is doing, and proof for a screenshot that the window itself is on screen
-      Text(this.status)
-        .fontSize(12)
-        .fontColor('#808080')
-        .align(Alignment.BottomStart)
-        .margin({ left: 12, bottom: 8 })
+      if (!this.isGame) {
+        Text(this.status)
+          .fontSize(12)
+          .fontColor('#808080')
+          .align(Alignment.BottomStart)
+          .margin({ left: 12, bottom: 8 })
         // A development door to the design-system proof page: tapping the status line opens it. The library
         // replaces this entry point once S2 lands; until then the gallery has to be reachable on the device.
         .onClick(() => {
@@ -1540,6 +1555,7 @@ struct Index {
             dmhost.log(`gallery: ${e.message}`);
           });
         })
+      }
       // ---- P1.4 layout editor. Drag a zone to move it, a second finger to resize; the sliders tune the whole pad
       // (opacity, scale). "完成" keeps the layout, "恢复默认" restores the pack's own. Esc/Enter also finish, for a
       // keyboard. The copy is the product's, not a debug panel's: this is a screen a player reaches by accident.
@@ -1666,6 +1682,174 @@ struct Index {
         .borderRadius(Radius.lg)
         .backgroundColor('rgba(19,28,46,0.94)')
       }
+      // ---- In-Game Right-Side Quick Drawer: Audio, Virtual Pad, HUD, Safe Exit ----
+      if (this.quickMenuOpen) {
+        Stack({ alignContent: Alignment.End }) {
+          Column()
+            .width('100%')
+            .height('100%')
+            .backgroundColor('rgba(0,0,0,0.48)')
+            .onClick(() => { this.quickMenuOpen = false; })
+
+          Scroll() {
+            Column({ space: Space.s4 }) {
+              Row() {
+                Text('游戏快捷菜单')
+                  .fontSize(Font.title)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(TextToken.primary)
+                  .layoutWeight(1)
+                Button('继续')
+                  .fontSize(Font.caption)
+                  .fontColor(TextToken.inverse)
+                  .backgroundColor(Semantic.accent)
+                  .borderRadius(Radius.full)
+                  .height(32)
+                  .padding({ left: 14, right: 14 })
+                  .onClick(() => { this.quickMenuOpen = false; })
+              }.width('100%')
+
+              // 1. 声音控制（步进器避开鸿蒙 Slider 浮窗数字 bug，直连 libdmhost 音频增益）
+              Column({ space: Space.s2 }) {
+                Row() {
+                  Text('游戏声音').fontSize(Font.label).fontWeight(FontWeight.Bold).fontColor(TextToken.primary)
+                  Blank()
+                  Text(this.audioMuted ? '已静音' : `${this.audioVolume}%`)
+                    .fontSize(Font.label)
+                    .fontColor(this.audioMuted ? Semantic.coral : Semantic.accent)
+                }.width('100%')
+
+                Row({ space: Space.s2 }) {
+                  Button('−')
+                    .fontSize(Font.body).fontColor(TextToken.primary)
+                    .backgroundColor(Bg.card).borderRadius(Radius.sm).width(42).height(36)
+                    .onClick(() => {
+                      this.audioVolume = Math.max(0, this.audioVolume - 10);
+                      this.audioMuted = this.audioVolume === 0;
+                      this.applyGameAudio();
+                    })
+                  Button(this.audioMuted ? '取消静音' : '一键静音')
+                    .fontSize(Font.caption)
+                    .fontColor(this.audioMuted ? Semantic.coral : TextToken.primary)
+                    .backgroundColor(this.audioMuted ? Semantic.coralSoft : Bg.card)
+                    .borderRadius(Radius.sm).layoutWeight(1).height(36)
+                    .onClick(() => {
+                      this.audioMuted = !this.audioMuted;
+                      this.applyGameAudio();
+                    })
+                  Button('+')
+                    .fontSize(Font.body).fontColor(TextToken.primary)
+                    .backgroundColor(Bg.card).borderRadius(Radius.sm).width(42).height(36)
+                    .onClick(() => {
+                      this.audioVolume = Math.min(100, this.audioVolume + 10);
+                      this.audioMuted = false;
+                      this.applyGameAudio();
+                    })
+                }.width('100%')
+              }
+              .width('100%')
+              .padding({ top: Space.s3 })
+              .border({ width: { top: 1 }, color: Semantic.borderSubtle })
+
+              // 2. 虚拟手柄快调
+              Column({ space: Space.s2 }) {
+                Row() {
+                  Text('显示虚拟按键').fontSize(Font.label).fontColor(TextToken.primary)
+                  Blank()
+                  Toggle({ type: ToggleType.Switch, isOn: this.padVisible })
+                    .selectedColor(Semantic.accent)
+                    .onChange((v: boolean) => {
+                      this.padVisible = v;
+                      this.drawPad();
+                    })
+                }.width('100%')
+
+                Row({ space: Space.s2 }) {
+                  Text('透明度').fontSize(Font.caption).fontColor(TextToken.secondary).width(48)
+                  Button('−').fontSize(Font.body).fontColor(TextToken.primary)
+                    .backgroundColor(Bg.card).borderRadius(Radius.sm).width(36).height(32)
+                    .onClick(() => {
+                      this.padOpacity = Math.max(0.2, Math.round((this.padOpacity - 0.1) * 10) / 10);
+                      this.drawPad();
+                    })
+                  Text(`${Math.round(this.padOpacity * 100)}%`).fontSize(Font.caption).fontColor(TextToken.primary)
+                    .layoutWeight(1).textAlign(TextAlign.Center)
+                  Button('+').fontSize(Font.body).fontColor(TextToken.primary)
+                    .backgroundColor(Bg.card).borderRadius(Radius.sm).width(36).height(32)
+                    .onClick(() => {
+                      this.padOpacity = Math.min(1.0, Math.round((this.padOpacity + 0.1) * 10) / 10);
+                      this.drawPad();
+                    })
+                }.width('100%')
+
+                Button('可视化编辑按键布局')
+                  .width('100%').height(38).fontSize(Font.label)
+                  .fontColor(TextToken.primary).backgroundColor(Bg.card).borderRadius(Radius.md)
+                  .onClick(() => {
+                    this.quickMenuOpen = false;
+                    this.padVisible = true;
+                    this.editMode = true;
+                    this.drawPad();
+                  })
+              }
+              .width('100%')
+              .padding({ top: Space.s3 })
+              .border({ width: { top: 1 }, color: Semantic.borderSubtle })
+
+              // 3. 性能浮窗
+              Column({ space: Space.s2 }) {
+                Row() {
+                  Text('显示帧率浮窗').fontSize(Font.label).fontColor(TextToken.primary)
+                  Blank()
+                  Toggle({ type: ToggleType.Switch, isOn: this.fpsVisible })
+                    .selectedColor(Semantic.accent)
+                    .onChange((v: boolean) => {
+                      if (v !== this.fpsVisible) this.fpsToggle();
+                    })
+                }.width('100%')
+
+                Row({ space: Space.s2 }) {
+                  Button('停靠左上')
+                    .layoutWeight(1).height(32).fontSize(Font.caption)
+                    .fontColor(!this.hudRightCorner ? TextToken.inverse : TextToken.secondary)
+                    .backgroundColor(!this.hudRightCorner ? Semantic.accent : Bg.card)
+                    .borderRadius(Radius.sm)
+                    .onClick(() => { this.hudRightCorner = false; })
+                  Button('停靠右上')
+                    .layoutWeight(1).height(32).fontSize(Font.caption)
+                    .fontColor(this.hudRightCorner ? TextToken.inverse : TextToken.secondary)
+                    .backgroundColor(this.hudRightCorner ? Semantic.accent : Bg.card)
+                    .borderRadius(Radius.sm)
+                    .onClick(() => { this.hudRightCorner = true; })
+                }.width('100%')
+              }
+              .width('100%')
+              .padding({ top: Space.s3 })
+              .border({ width: { top: 1 }, color: Semantic.borderSubtle })
+
+              // 4. 安全退出
+              Button('退出到游戏库')
+                .width('100%').height(42).fontSize(Font.label).fontWeight(FontWeight.Medium)
+                .fontColor(Semantic.danger).backgroundColor('rgba(239,68,68,0.14)')
+                .border({ width: 1, color: Semantic.danger, radius: Radius.md })
+                .borderRadius(Radius.md)
+                .margin({ top: Space.s2 })
+                .onClick(() => {
+                  this.quickMenuOpen = false;
+                  this.confirmExit = true;
+                })
+            }
+            .padding(Space.s4)
+          }
+          .width(320)
+          .height('100%')
+          .backgroundColor(Bg.drawerGlass)
+          .border({ width: { left: 1 }, color: Semantic.borderSubtle })
+        }
+        .width('100%')
+        .height('100%')
+      }
+
       // ---- S5: leaving the game ends the process, so ask first and say what it costs ----
       ConfirmDialog({
         visible: this.confirmExit,
@@ -1688,7 +1872,7 @@ struct Index {
     .defaultFocus(true)
     // In edit mode the overlay must not starve the panel's own controls: the steppers, 完成 and 恢复默认 are
     // children of this Stack, and a Stack that takes the touch for itself leaves them dead (measured).
-    .hitTestBehavior(this.editMode ? HitTestMode.Transparent : HitTestMode.Default)
+    .hitTestBehavior((this.editMode || this.quickMenuOpen || this.confirmExit) ? HitTestMode.Transparent : HitTestMode.Default)
     .onAreaChange((oldValue: Area, newValue: Area) => {
       const w = newValue.width as number;
       const h = newValue.height as number;

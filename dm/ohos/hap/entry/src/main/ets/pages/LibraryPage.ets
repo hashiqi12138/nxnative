@@ -38,6 +38,7 @@ interface Cell {
 @Entry
 @Component
 struct LibraryPage {
+  @State activeTab: string = 'library';
   @State games: GameEntry[] = [];
   @State loading: boolean = true;
   /** Which cell the gamepad/keyboard pointer is on; -1 means the top bar's add button. */
@@ -500,11 +501,11 @@ struct LibraryPage {
   }
 
   /** Delete one game's tree after the confirm. */
-  private async doDelete(titleId: string): Promise<void> {
+  private doDelete(titleId: string): void {
     const ctx = this.getUIContext().getHostContext();
     const files: string = ctx?.filesDir ?? '';
     const g: GameEntry | undefined = this.games.find((x: GameEntry): boolean => x.titleId === titleId);
-    const ok: boolean = await deleteGame(files, titleId);
+    const ok: boolean = deleteGame(files, titleId);
     console.info(`library: delete ${titleId} -> ${ok}`);
     this.detailVisible = false;
     this.detailGame = null;
@@ -693,8 +694,12 @@ struct LibraryPage {
 
       Column() {
         TopBar({
-          showAdd: !this.loading,
+          showAdd: !this.loading && this.activeTab === 'library',
           barHeight: this.landscape ? Size.topBar : 56,
+          activeTab: this.activeTab,
+          showTabs: true,
+          downloadActive: this.remoteBusy,
+          onTabChange: (tab: string) => { this.activeTab = tab; },
           onAdd: () => this.pickPack(),
           onSettings: () => {
             router.pushUrl({ url: 'pages/SettingsPage' }).catch((e: Error) => {
@@ -718,15 +723,23 @@ struct LibraryPage {
           })
         }
 
-      if (this.loading) {
-        // a skeleton, not a spinner: the shape of what is coming reads as faster than an empty screen
+      if (this.activeTab === 'downloads') {
+        RemotePacksSection({
+          onImported: () => { this.reload(); },
+          onOpenSettings: () => {
+            router.pushUrl({ url: 'pages/SettingsPage' }).catch((e: Error) => {
+              this.showToast('无法打开设置');
+            });
+          }
+        })
+      } else if (this.loading) {
         Row({ space: Space.s5 }) {
           ForEach([0, 1, 2], (i: number) => {
             Column()
-              .width(this.coverSize > 0 ? this.coverSize : 260)
-              .height(this.coverSize > 0 ? this.coverSize : 260)
+              .width(this.coverSize > 0 ? this.coverSize : 240)
+              .height(this.coverSize > 0 ? this.coverSize : 240)
               .backgroundColor(Bg.card)
-              .borderRadius(Radius.lg)
+              .borderRadius(Radius.cover)
               .opacity(0.5)
           }, (i: number) => `${i}`)
         }
@@ -737,7 +750,7 @@ struct LibraryPage {
         Column() {
           EmptyState({
             onAdd: () => this.pickPack(),
-            onGuide: () => this.showToast('导入指南见 docs/ohos/GAMEDATA.md')
+            onGuide: () => { this.activeTab = 'downloads'; }
           })
         }
         .width('100%')
@@ -745,17 +758,6 @@ struct LibraryPage {
         .justifyContent(FlexAlign.Center)
       } else {
         this.grid()
-      }
-
-      // ---- S4: what a local pack server offers, under the installed games ----
-      // The section draws nothing when no source is set, so a device without a server looks exactly as before.
-      // It sits here rather than in a settings sub-page because downloading a pack is a library action.
-      if (!this.loading) {
-        RemotePacksSection({
-          // The grid must pick up the new game; the section re-reads its own rows from RemoteDownloads (which set
-          // the row to Installed), so a plain reload is enough - no second refresh round trip to the server.
-          onImported: () => { this.reload(); }
-        })
       }
 
       if (this.toast.length > 0) {

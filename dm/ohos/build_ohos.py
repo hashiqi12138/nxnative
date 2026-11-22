@@ -9,10 +9,11 @@ from pathlib import Path
 
 DM = Path(__file__).resolve().parent.parent          # dm/
 ap = argparse.ArgumentParser()
-ap.add_argument('--game', required=True)
+ap.add_argument('--game', help="a game id bakes that profile's constants in (--profile builtin); without it the library runs every game from the pack's profile.tsv (--profile runtime), which is what the HAP carries")
 # P4.1: builtin writes the profile's constants into the binary (Mac/iOS and the OHOS fallback); runtime writes the table the
 # host fills from the pack's profile.tsv, so one library runs every game. The two build into separate output folders.
-ap.add_argument('--profile', default='builtin', choices=('builtin', 'runtime'))
+# Without --game only runtime exists: there is no profile to bake in, and the pack's profile.tsv is the only source.
+ap.add_argument('--profile', choices=('builtin', 'runtime'))
 ap.add_argument('--sdk', default=os.environ.get('OHOS_SDK'))
 ap.add_argument('--out')
 ap.add_argument('--jobs', type=int, default=os.cpu_count() or 8)
@@ -25,6 +26,10 @@ ap.add_argument('--release', action='store_true')
 ap.add_argument('--check-patches', action='store_true', help='run test_ohos_patches.py first: fail the build if a shared file no longer reproduces from upstream main + dm/ohos/patches (stale queue or accidental edit)')
 ap.add_argument('--upstream-dir', help="an extracted upstream dm/ for --check-patches (default: the nested repo's upstream/main ref)")
 a = ap.parse_args()
+NAME = a.game or 'runtime'                       # the output folder's name; no game = the one runtime library
+a.profile = a.profile or ('builtin' if a.game else 'runtime')
+if a.profile == 'builtin' and not a.game:
+    sys.exit('build_ohos.py: --profile builtin needs --game (there is no profile to bake in); leave both out for the runtime library')
 if a.check_patches:
     subprocess.run([sys.executable, str(DM / 'tools/test_ohos_patches.py')] + (['--upstream-dir', a.upstream_dir] if a.upstream_dir else []), check=True)
 if not (a.exe or a.lib): a.exe = a.lib = True
@@ -50,14 +55,14 @@ if not sdk:
 sdk = sdk.resolve(); bin_ = sdk / 'native/llvm/bin'
 CC = str(bin_ / ('clang.exe' if os.name == 'nt' else 'clang')); SYSROOT = str(sdk / 'native/sysroot')
 TARGET = '--target=aarch64-linux-ohos'
-out = Path(a.out) if a.out else DM / 'ohos/out' / (a.game + ('-release' if a.release else '') + ('-rt' if a.profile == 'runtime' else ''))
+out = Path(a.out) if a.out else DM / 'ohos/out' / (NAME + ('-release' if a.release else '') + ('-rt' if a.profile == 'runtime' and a.game else ''))
 DBG = [] if a.release else ['-g']
-obj = out / 'obj'; gen = out / 'gen'; obj.mkdir(parents=True, exist_ok=True); (gen / a.game).mkdir(parents=True, exist_ok=True)
+obj = out / 'obj'; gen = out / 'gen'; obj.mkdir(parents=True, exist_ok=True); (gen / NAME).mkdir(parents=True, exist_ok=True)
 
 # ---- generated headers ---------------------------------------------------------------------------------------------------------------------
-subprocess.run([sys.executable, str(DM / 'games/game.py'), 'header', a.game, str(gen / a.game / 'game_profile.h')]
+subprocess.run([sys.executable, str(DM / 'games/game.py'), 'header', a.game or '-', str(gen / NAME / 'game_profile.h')]
                + (['--runtime'] if a.profile == 'runtime' else []), check=True)
-if a.profile == 'runtime':   # the rows a pack carries; kept beside the library so a device test can push it
+if a.profile == 'runtime' and a.game:   # the rows a pack carries; kept beside the library so a device test can push it
     subprocess.run([sys.executable, str(DM / 'games/game.py'), 'profile', a.game, str(out / 'profile.tsv')], check=True)
 
 # the backend's own small shaders (dm/gfx/vk/shaders): glslc (a Vulkan SDK's, or $GLSLC) → gen/<game>/<name>_<stage>.spv.h
@@ -70,7 +75,7 @@ def find_glslc():
     return next((Path(c) for c in cands if c and Path(c).exists()), None)
 GLSLC = find_glslc()
 for sh in sorted((DM / 'gfx/vk/shaders').glob('*.*')):
-    hdr = gen / a.game / f'{sh.stem}_{sh.suffix[1:]}.spv.h'
+    hdr = gen / NAME / f'{sh.stem}_{sh.suffix[1:]}.spv.h'
     if hdr.exists() and hdr.stat().st_mtime > sh.stat().st_mtime: continue
     if not GLSLC: sys.exit(f'build_ohos.py: {sh.name} needs glslc (set GLSLC to a glslc binary)')
     spv = gen / f'{sh.name}.spv'
@@ -93,7 +98,7 @@ VPX = srcs('third_party/libvpx/**/*.c')   # VP9, for the movie decoder (hle_movi
 PORT_SKIP = {'build_ohos.py'}
 
 INC = ['-include', str(DM / 'compat/include/darwin_compat.h'), f'-I{DM / "compat/include"}', f'-I{DM / "ohos/include"}', f'-I{DM / "ohos"}', f'-I{DM / "gfx/vk"}', f'-I{DM / "host"}',
-       f'-I{DM / "gfx/nvn"}', f'-I{DM / "gfx/tex"}', f'-I{DM / "gfx/nvn/include"}', f'-I{gen / a.game}', f'-I{DM / "third_party/libvpx"}',
+       f'-I{DM / "gfx/nvn"}', f'-I{DM / "gfx/tex"}', f'-I{DM / "gfx/nvn/include"}', f'-I{gen / NAME}', f'-I{DM / "third_party/libvpx"}',
        f'-I{DM / "third_party/stb_vorbis"}']
 CFLAGS = [TARGET, f'--sysroot={SYSROOT}', f'-O{a.O}'] + DBG + ['-fPIC', '-fno-omit-frame-pointer', '-ffixed-x18', '-Wall', '-Wno-unused-function', '-Wno-unused-variable',
           '-Wno-unused-but-set-variable', '-Wno-format', '-Wno-deprecated-declarations', '-Wno-gnu-folding-constant', '-Werror=implicit-function-declaration',

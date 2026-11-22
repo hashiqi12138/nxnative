@@ -11,6 +11,7 @@ export default class EntryAbility extends UIAbility {
     const win: window.Window = windowStage.getMainWindowSync();
     win.setWindowLayoutFullScreen(true).catch((e: Error) => hilog.error(0x0000, 'dmhost', 'full screen: %{public}s', e.message));
     win.setWindowKeepScreenOn(true).catch((e: Error) => hilog.error(0x0000, 'dmhost', 'keep screen on: %{public}s', e.message));
+    try { win.setWindowBackgroundColor('#000000'); } catch (e) { hilog.error(0x0000, 'dmhost', 'bg color failed'); }
     // the surface's rotation is the module's (landscape in module.json5); the game draws into it unrotated
     //
     // The library is the entry point (S2), not the game page: a player who opens the app sees their games and picks

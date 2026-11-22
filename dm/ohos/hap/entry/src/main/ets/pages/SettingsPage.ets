@@ -1,3 +1,4 @@
+import dmhost from 'libdmhost.so';
 /*
  * SettingsPage.ets - the product's settings (P1.6).
  *
@@ -26,7 +27,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 /**
  * The pad's preferences are per game ('pad_<titleId>'): a layout that suits a 2D platformer does not suit a game
  * whose right stick is the camera. The settings page edits the layout of the game that is installed - the one a
- * player would be adjusting for - and falls back to 'pad_default' when there is none.
+ * player would be adjusting for - and falls back to the pack's profile layout when there is none.
  */
 const PREF_NAME: string = 'pad';
 const PREF_LIBRARY: string = 'library';   // the app-wide store: the remote source (P3.3)
@@ -38,6 +39,9 @@ const PREF_SCALE: string = 'scale';
 export struct SettingsPage {
   @State padOpacity: number = 1.0;
   @State padScale: number = 1.0;
+  @State audioVolume: number = 100;
+  @State audioMuted: boolean = false;
+  @State fpsDefaultVisible: boolean = true;
   /** Bytes on disk; -1 while the walk runs. */
   @State gamesBytes: number = -1;
   @State cacheBytes: number = -1;
@@ -84,6 +88,14 @@ export struct SettingsPage {
       const lib = await preferences.getPreferences(ctx, PREF_LIBRARY);
       const src = lib.getSync(PREF_SOURCE, '') as string;
       if (typeof src === 'string' && src.length) { this.sourceSaved = src; this.sourceText = src; }
+      const av = lib.getSync('audioVolume', 100) as number;
+      const am = lib.getSync('audioMuted', false) as boolean;
+      const fv = lib.getSync('fpsVisible', true) as boolean;
+      if (typeof av === 'number') this.audioVolume = Math.max(0, Math.min(100, av));
+      if (typeof am === 'boolean') this.audioMuted = am;
+      if (typeof fv === 'boolean') this.fpsDefaultVisible = fv;
+      dmhost.setAudioVolume(this.audioVolume);
+      dmhost.setAudioMuted(this.audioMuted);
     } catch (e) {
       // defaults stand
     }
@@ -125,6 +137,28 @@ export struct SettingsPage {
     } catch (e) {
       // a preference that cannot be written only costs the next launch
     }
+  }
+
+  private saveLibraryAudio(): void {
+    dmhost.setAudioVolume(this.audioVolume);
+    dmhost.setAudioMuted(this.audioMuted);
+    const ctx = this.getUIContext().getHostContext();
+    if (!ctx) return;
+    preferences.getPreferences(ctx, PREF_LIBRARY).then((lib: preferences.Preferences) => {
+      lib.putSync('audioVolume', this.audioVolume);
+      lib.putSync('audioMuted', this.audioMuted);
+      lib.flush();
+    }).catch(() => {});
+  }
+
+  private saveHudDefault(on: boolean): void {
+    this.fpsDefaultVisible = on;
+    const ctx = this.getUIContext().getHostContext();
+    if (!ctx) return;
+    preferences.getPreferences(ctx, PREF_LIBRARY).then((lib: preferences.Preferences) => {
+      lib.putSync('fpsVisible', on);
+      lib.flush();
+    }).catch(() => {});
   }
 
   /**
@@ -354,12 +388,12 @@ export struct SettingsPage {
     Column() {
       // ---- the bar ----
       Row({ space: Space.s3 }) {
-        Button('←')
-          .fontSize(Font.body)
+        Button('← 返回')
+          .fontSize(Font.label)
+          .padding({ left: Space.s3, right: Space.s3 })
           .fontColor(TextToken.primary)
           .backgroundColor('rgba(0,0,0,0)')
-          .width(44)
-          .height(44)
+          .height(38)
           .onClick(() => {
             router.back();
           })
@@ -423,6 +457,66 @@ export struct SettingsPage {
               this.padScale = Math.min(1.6, Math.round((this.padScale + 0.05) * 100) / 100);
               this.savePref(PREF_SCALE, this.padScale);
             })
+
+          // ---- 声音与性能 HUD ----
+          this.heading('声音与显示')
+
+          this.stepRow('游戏主音量', this.audioMuted ? '已静音' : `${this.audioVolume}%`,
+            () => {
+              this.audioVolume = Math.max(0, this.audioVolume - 10);
+              this.audioMuted = this.audioVolume === 0;
+              this.saveLibraryAudio();
+            },
+            () => {
+              this.audioVolume = Math.min(100, this.audioVolume + 10);
+              this.audioMuted = false;
+              this.saveLibraryAudio();
+            })
+
+          Row() {
+            Text('静音模式')
+              .fontSize(Font.label)
+              .fontColor(TextToken.secondary)
+              .layoutWeight(1)
+            Toggle({ type: ToggleType.Switch, isOn: this.audioMuted })
+              .selectedColor(Semantic.coral)
+              .onChange((isOn: boolean) => {
+                this.audioMuted = isOn;
+                this.saveLibraryAudio();
+              })
+          }
+          .width('100%')
+          .padding({ top: Space.s2, bottom: Space.s2 })
+
+          Row() {
+            Text('默认显示帧率浮窗')
+              .fontSize(Font.label)
+              .fontColor(TextToken.secondary)
+              .layoutWeight(1)
+            Toggle({ type: ToggleType.Switch, isOn: this.fpsDefaultVisible })
+              .selectedColor(Semantic.accent)
+              .onChange((isOn: boolean) => this.saveHudDefault(isOn))
+          }
+          .width('100%')
+          .padding({ top: Space.s2, bottom: Space.s2 })
+
+          Row() {
+            Column({ space: 2 }) {
+              Text('外接手柄检测').fontSize(Font.label).fontColor(TextToken.primary)
+              Text('扫描已配对的蓝牙 / USB 手柄输入设备').fontSize(Font.caption).fontColor(TextToken.tertiary)
+            }.layoutWeight(1).alignItems(HorizontalAlign.Start)
+            Button('立即检测')
+              .fontSize(Font.caption)
+              .fontColor(TextToken.primary)
+              .backgroundColor(Bg.card)
+              .border({ width: 1, color: Semantic.borderSubtle, radius: Radius.full })
+              .borderRadius(Radius.full)
+              .height(34)
+              .padding({ left: Space.s4, right: Space.s4 })
+              .onClick(() => this.listDevices())
+          }
+          .width('100%')
+          .padding({ top: Space.s2, bottom: Space.s2 })
 
           // ---- 数据 ----
           this.heading('数据')

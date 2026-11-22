@@ -1,42 +1,92 @@
 /*
- * TopBar.ets - the library's header: the product's name on the left, the add action on the right.
- *
- * It exists so the screen has an identity ("NXOHOS") rather than reading like a file browser, and so the add
- * action has a fixed home that does not move as the grid grows.
+ * TopBar.ets - NXOHOS redesigned header:
+ * Brand identity on the left, segmented Library / Downloads switcher in the centre,
+ * and unclipped Settings + Add Game pills on the right.
  */
 
 import { Bg, Text as TextToken, Semantic, Space, Font, Radius, Size } from '../theme/Tokens';
 
 @Component
 export struct TopBar {
-  /** The product name. */
   @Prop title: string = 'NXOHOS';
-  /** Whether to draw the add button (hidden while an import runs). */
   @Prop showAdd: boolean = true;
-  /** The bar's height: 64 in landscape, 56 in portrait. */
   @Prop barHeight: number = Size.topBar;
+  /** Active top-level tab: 'library' | 'downloads'. */
+  @Prop activeTab: string = 'library';
+  /** Whether to show the segmented tab switcher (true on LibraryPage, false in GalleryPage). */
+  @Prop showTabs: boolean = false;
+  /** Active download indicator badge on the Downloads tab. */
+  @Prop downloadActive: boolean = false;
+  onTabChange: (tab: string) => void = (_tab: string) => {};
   onAdd: () => void = () => {};
   onSettings: () => void = () => {};
 
   build() {
-    Row() {
-      Text(this.title)
-        .fontSize(Font.title)
-        .fontColor(TextToken.primary)
-        .fontWeight(FontWeight.Medium)
-        .letterSpacing(0.5)
+    Row({ space: Space.s3 }) {
+      // Brand mark
+      Row({ space: Space.s2 }) {
+        Column()
+          .width(8)
+          .height(22)
+          .borderRadius(Radius.full)
+          .backgroundColor(Semantic.accent)
+        Text(this.title)
+          .fontSize(Font.title)
+          .fontColor(TextToken.primary)
+          .fontWeight(FontWeight.Bold)
+          .letterSpacing(0.8)
+      }
+      .alignItems(VerticalAlign.Center)
+
+      if (this.showTabs) {
+        Row({ space: 4 }) {
+          Button('游戏库')
+            .fontSize(Font.label)
+            .fontWeight(this.activeTab === 'library' ? FontWeight.Bold : FontWeight.Regular)
+            .fontColor(this.activeTab === 'library' ? TextToken.inverse : TextToken.secondary)
+            .backgroundColor(this.activeTab === 'library' ? Semantic.accent : 'rgba(0,0,0,0)')
+            .borderRadius(Radius.full)
+            .height(34)
+            .padding({ left: Space.s4, right: Space.s4 })
+            .onClick(() => this.onTabChange('library'))
+
+          Button() {
+            Row({ space: 6 }) {
+              Text('下载库')
+                .fontSize(Font.label)
+                .fontWeight(this.activeTab === 'downloads' ? FontWeight.Bold : FontWeight.Regular)
+                .fontColor(this.activeTab === 'downloads' ? TextToken.inverse : TextToken.secondary)
+              if (this.downloadActive) {
+                Circle({ width: 7, height: 7 })
+                  .fill(this.activeTab === 'downloads' ? TextToken.inverse : Semantic.coral)
+              }
+            }
+            .alignItems(VerticalAlign.Center)
+          }
+          .backgroundColor(this.activeTab === 'downloads' ? Semantic.accent : 'rgba(0,0,0,0)')
+          .borderRadius(Radius.full)
+          .height(34)
+          .padding({ left: Space.s4, right: Space.s4 })
+          .onClick(() => this.onTabChange('downloads'))
+        }
+        .padding(3)
+        .backgroundColor(Bg.elevated)
+        .borderRadius(Radius.full)
+        .border({ width: 1, color: Semantic.borderSubtle })
+        .margin({ left: Space.s4 })
+      }
 
       Blank()
 
-      // Settings sits left of Add: the add action is the primary one, and the gear is where a console puts it -
-      // the far end of the bar, out of the way of the daily flow.
-      Button('⚙')
-        .fontSize(Font.body)
-        .fontColor(TextToken.secondary)
-        .backgroundColor('rgba(0,0,0,0)')
-        .width(44)
-        .height(44)
-        .margin({ right: Space.s2 })
+      // Settings pill (replaces clipped 44vp gear button)
+      Button('设置')
+        .fontSize(Font.label)
+        .fontColor(TextToken.primary)
+        .backgroundColor(Bg.card)
+        .border({ width: 1, color: Semantic.borderSubtle, radius: Radius.full })
+        .borderRadius(Radius.full)
+        .height(Size.buttonMd)
+        .padding({ left: Space.s4, right: Space.s4 })
         .onClick(() => this.onSettings())
         .accessibilityText('设置')
         .accessibilityRole(AccessibilityRoleType.BUTTON)
@@ -47,25 +97,26 @@ export struct TopBar {
             Text('+')
               .fontSize(Font.body)
               .fontColor(TextToken.inverse)
-              .fontWeight(FontWeight.Medium)
-            Text('添加游戏')
+              .fontWeight(FontWeight.Bold)
+            Text('导入游戏')
               .fontSize(Font.label)
               .fontColor(TextToken.inverse)
+              .fontWeight(FontWeight.Medium)
           }
           .alignItems(VerticalAlign.Center)
         }
         .backgroundColor(Semantic.accent)
-        .borderRadius(Radius.md)
+        .borderRadius(Radius.full)
         .height(Size.buttonMd)
         .padding({ left: Space.s4, right: Space.s4 })
         .onClick(() => this.onAdd())
-        .accessibilityText('添加游戏')
+        .accessibilityText('导入游戏')
         .accessibilityRole(AccessibilityRoleType.BUTTON)
       }
     }
     .width('100%')
     .height(this.barHeight)
-    .padding({ left: Space.s6, right: Space.s6 })
-    .backgroundColor('rgba(0,0,0,0)')   // transparent: the ambient light runs through the bar
+    .padding({ left: Space.s5, right: Space.s5 })
+    .backgroundColor('rgba(0,0,0,0)')
   }
 }

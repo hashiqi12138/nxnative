@@ -50,6 +50,8 @@ static uint8_t *g_stack; static size_t g_stack_cap;
 static _Atomic uint64_t g_alias_hw;   // how far into the alias region the game has mapped (its end's offset)
 // The address lies in the guest address block (every guest thread stack is here: the game's own heap or the stack region); the big-stack entry (hle_bigstack.c) uses it to decide whether to switch stacks
 int dm_guest_as_contains(uintptr_t a) { uintptr_t b = (uintptr_t)g_as; return g_as && a >= b && a - b < g_reserve; }
+// The main thread's stack region as svcGetInfo(I_StackAddr/I_StackSize) reports it: on Horizon the main thread runs on it, so the host runs the guest main thread there too (main.c)
+void dm_guest_stack_region(uint8_t **base, size_t *cap) { *base = g_stack; *cap = g_stack_cap; }
 
 // A size switch: bytes (decimal or 0x hex), or whole K / M / G (DM_GUEST_FILE_CHUNK=1G); 0 when unset. At least min, in whole units of align
 static size_t env_size(const char *name, size_t min, size_t align) {
@@ -707,6 +709,7 @@ static void map_source_query(uint64_t addr, uint64_t *base, uint64_t *size, uint
     *base = lo; *size = remaining;
 }
 
+#if !defined(DM_OHOS)   // the OHOS build keeps the earlier QueryMemory reply (see the svc 0x06 branch)
 // Clip an unmapped interval to the regions on either side of the queried address.
 static void query_gap_bound(uint64_t addr, uint64_t start, uint64_t end, uint64_t *lo, uint64_t *hi) {
     if (end <= addr && end > *lo) *lo = end;
@@ -732,6 +735,7 @@ static void query_external_gap(uint64_t addr, uint64_t stack_lo, uint64_t stack_
     *base = lo;
     *size = hi - lo;
 }
+#endif
 
 // Diagnostic DM_ALIAS_WINDOWS=<window MB>: every 30 s, the mapped memory of each window of that size in the alias region (windows aligned to the size in absolute addresses, counted from the page
 // bitmap; windows with nothing mapped are left out). For sizing an allocator that reserves fixed, aligned windows and commits pages from each window's start: Unreal's FMallocBinned3 takes
@@ -1034,6 +1038,17 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
                 base = mb + lo; size = hi - lo;
             }
         }
+#if defined(DM_OHOS)
+        else {
+            // OHOS: the free-span / Darwin address-limit reports below make the SDK's module walk count a 64 GB "program size"
+            // in nninitStartup, and the heap it then asks for (total - used) exceeds the heap region: TOTK's SetHeapSize failed
+            // and nnMain dereferenced a NULL heap. Keep the port's earlier reply: the thread's stack when inside it, else the 4 KiB page.
+            uint64_t top = (uintptr_t)pthread_get_stackaddr_np(pthread_self()), ssz = pthread_get_stacksize_np(pthread_self());
+            uint64_t bottom = top - ssz;
+            if (addr < top && addr >= bottom) { base = bottom; size = ssz; state = 0xB/*Stack*/; perm = 3; }
+            else { base = addr & ~UINT64_C(0xFFF); size = 0x1000; state = 0/*Free*/; perm = 0; }
+        }
+#else
         else if (addr >= MACH_VM_MAX_ADDRESS) {
             // Horizon describes addresses past the process limit with a reserved block whose end wraps to zero.
             base = MACH_VM_MAX_ADDRESS; size = 0 - base; state = 0x10; perm = 0;
@@ -1046,6 +1061,7 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
             if (addr < top && addr >= bottom) { base = bottom; size = ssz; state = 0xB/*Stack*/; perm = 3; }
             else { query_external_gap(addr, bottom, top, mm, &base, &size); state = 0/*Free*/; perm = 0; }
         }
+#endif
         map_source_query(addr, &base, &size, &attr, &perm);
         pthread_mutex_unlock(&g_map_lock);
         if (mi) {

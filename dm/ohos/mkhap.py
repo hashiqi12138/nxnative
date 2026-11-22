@@ -19,7 +19,7 @@ BUNDLE = 'dev.eden_emu.ohos'
 ABILITY = 'EntryAbility'
 
 ap = argparse.ArgumentParser()
-ap.add_argument('--game', required=True, help='the title ID (names the host build folder and the ASCII build copy)')
+ap.add_argument('--game', help="optional: names the host build folder (out/<game>/libdmhost.so, ohos_build_dmhost_<game>); omit it for the game-less runtime library (out/runtime) - the HAP then carries every game's constants in the pack's profile.tsv")
 ap.add_argument('--lib', help="the libdmhost.so to pack (default: ohos/out/<game>/libdmhost.so; porter passes its own build's)")
 ap.add_argument('--data')
 ap.add_argument('--split-mb', type=int, default=3500,
@@ -28,7 +28,8 @@ ap.add_argument('--install', action='store_true')
 ap.add_argument('--keep-build', action='store_true')
 ap.add_argument('--out', default=OUT)
 a = ap.parse_args()
-SO = a.lib or os.path.join(OUT, a.game, 'libdmhost.so')
+NAME = a.game or 'runtime'                       # the host build folder's name; no game = the one runtime library
+SO = a.lib or os.path.join(OUT, NAME, 'libdmhost.so')
 if not os.path.isfile(SO): sys.exit(f'mkhap.py: {SO} is missing — run ohos/build_ohos.py --lib first')
 
 def find_deveco():
@@ -44,10 +45,10 @@ HDC = os.path.join(deveco, 'sdk', 'default', 'openharmony', 'toolchains', 'hdc.e
 def ascii_build_dir():
     cand = os.environ.get('DM_HAP_BUILD_DIR')
     if cand: return cand
-    # hvigor fails on a non-ASCII path, so the project is copied to a drive root; the title ID keeps two ports from deleting each other's copy
+    # hvigor fails on a non-ASCII path, so the project is copied to a drive root; the name keeps two ports from deleting each other's copy
     for d in ('F:', 'D:', 'C:'):
-        if os.path.isdir(d + os.sep): return os.path.join(d + os.sep, 'ohos_build_dmhost_' + a.game)
-    return os.path.join(os.path.expanduser('~'), 'ohos_build_dmhost_' + a.game)
+        if os.path.isdir(d + os.sep): return os.path.join(d + os.sep, 'ohos_build_dmhost_' + NAME)
+    return os.path.join(os.path.expanduser('~'), 'ohos_build_dmhost_' + NAME)
 
 build = ascii_build_dir()
 # The folder is emptied before the copy: refuse anything that is not one of ours (DM_HAP_BUILD_DIR pointed at a wrong path would delete it)
@@ -157,26 +158,8 @@ if a.data:
             json.dump(cfg, f, indent=2); f.write('\n')
 
 env = dict(os.environ); env['DEVECO_SDK_HOME'] = os.path.join(deveco, 'sdk'); env['PATH'] = NODE + os.pathsep + env.get('PATH', '')
-# The per-game pad default (P1.4): the profile's pad_layout / op_mode keys translated into a small json the app
-# reads as its on-screen pad's starting layout (Index.ets); the user's own edits live in the app's preferences.
-game_tsv = os.path.join(DM, 'games', a.game, 'game.tsv')
-pad_layout, op_mode = 'full', ''
-if os.path.isfile(game_tsv):
-    for ln in open(game_tsv, encoding='utf-8', errors='replace'):
-        parts = ln.split('\t')
-        if len(parts) >= 2 and not parts[0].startswith('#'):
-            if parts[0] == 'pad_layout': pad_layout = parts[1].strip()
-            if parts[0] == 'op_mode': op_mode = parts[1].strip()
-pad_default = {'layout': pad_layout, 'handheld': 'handheld' in op_mode}
-pad_dir = os.path.join(build, 'entry', 'src', 'main', 'resources', 'rawfile')
-# The directory exists only when --data created it (make_module, or the entry copy loop). A build without --data
-# has no rawfile at all, and writing into it failed with FileNotFoundError - the pad default is the app's own
-# starting layout, so it has to be written either way.
-os.makedirs(pad_dir, exist_ok=True)
-with open(os.path.join(pad_dir, 'pad_default.json'), 'w',
-          encoding='utf-8', newline='\n') as f:
-    json.dump(pad_default, f)
-print('pad_default.json: layout %s%s' % (pad_layout, ' (handheld)' if pad_default['handheld'] else ''))
+# The pad layout is no game constant baked in here: the app reads the pack's profile.tsv at run time (Index.ets
+# loadPadConfig), so one HAP starts every game with its own layout and keeps the player's edits in preferences.
 jbr = os.path.join(deveco, 'jbr')
 if os.path.isdir(jbr):   # HmacPBESHA256 signing needs JBR 21: the system's Java 11 cannot sign
     env['JAVA_HOME'] = jbr; env['PATH'] = os.path.join(jbr, 'bin') + os.pathsep + env['PATH']

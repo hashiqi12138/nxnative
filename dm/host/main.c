@@ -9,14 +9,17 @@
 #include <sys/time.h>
 #include <unistd.h>
 void probe_install(void); void hid_keys_init(void); void stubs_report(void); void crash_install(void); void guest_thread_init(void); void guest_gate_stack(int own_stack); uint32_t svc_thread_main_init(void);
+void guest_thread_set_stack(uint64_t base, uint64_t size); void dm_guest_stack_region(uint8_t **base, size_t *cap); void dm_run_on_stack(void *top, void (*fn)(void));
 typedef void (*fn0)(void); typedef void (*fn2)(uint64_t, uint64_t); typedef void (*fnp)(void *);
 static void *req(const char *n){ void *p=guest_sym(n); if(!p) die("missing symbol %s", n); return p; }
 
 // Game arguments: argv[0] is fixed to "game", and whatever follows "--" is appended as is (on a real device nn::init takes them from the process argument area and hands them to the SDK through SetHostArgc/Argv)
 static char *g_argv[64] = {"game"}; static int g_argc = 1;
 
-static void guest_main(void) {
+static void guest_main_inner(void) {
     guest_thread_init();
+    { uint8_t *sb; size_t sc; dm_guest_stack_region(&sb, &sc);
+      if (sb) guest_thread_set_stack((uint64_t)(uintptr_t)sb, sc); }   // the kernel-owned stack fields of the main thread's TLR object, which the SDK's GetCurrentStackInfo reads
     guest_gate_stack(0);   // the guest code runs on this thread's own stack: its SVCs get a stack of their own
     { void dm_oodle_serve_maybe(int); dm_oodle_serve_maybe(0); }   // DM_OODLE_SERVE tool mode: the game's own Oodle decoder over stdin / stdout (hle_oodle.c, exits when the input ends)
     uint32_t hmain = svc_thread_main_init();   // Main thread handle: x0 of nnosInitialize (stored in an sdk global, used by ThreadManagerImplByHorizon); x1 = pointer to the argument area
@@ -38,6 +41,16 @@ static void guest_main(void) {
     { void dm_oodle_job_maybe(void); dm_oodle_job_maybe(); }   // DM_OODLE_JOB: decode a job file with the game's own Oodle and exit (hle_oodle.c, for the offline shader tools)
     LOG(">>> nnMain"); ((fn0)req("nnMain"))();
     LOG("nnMain returned");
+}
+// Horizon runs the main thread on the stack region svcGetInfo(I_StackAddr/I_StackSize) reports, and the SDK checks sp against it: nn::os::detail::DebugImplByHorizon::GetCurrentStackInfo
+// aborts when sp is in no registered stack (TOTK calls nn::os::GetCurrentStackInfo right after nnMain; the host pthread stack this thread was created with is outside the guest block).
+// So enter the guest on the region's top 8 MB, as on hardware; the 4 KB at the very top stay free for the SDK's own use of the stack top. The rest of the region is what svcMapMemory maps into.
+static void guest_main(void) {
+    uint8_t *sb; size_t sc; dm_guest_stack_region(&sb, &sc);
+    if (sb && sc >= (8u << 20) + 0x2000) {
+        LOG("main thread stack: the guest stack region %p +%#zx, entered at its top 8 MB", sb, sc);
+        dm_run_on_stack(sb + sc - 0x1000, guest_main_inner);
+    } else guest_main_inner();
 }
 
 struct dm_flags g_flag;
@@ -107,10 +120,15 @@ static void host_preload(int argc, char **argv) {
 #ifdef DM_GAME_RT
     // OHOS P4.1: a runtime host's constants come from the pack's profile. Loaded before anything host-side reads a DM_GAME_*
     // value (the modules below, the memory partition further on); a missing or refused profile stops the start.
+    // argv[1] is the modules folder (<root>/mods) on this port; the pack's profile.tsv sits beside it, at DM_ROOT.
     {
-        char pp[1200]; snprintf(pp, sizeof pp, "%s/profile.tsv", argv[1]);
+        const char *root = getenv("DM_ROOT");
+        const char *base = root && *root ? root : argv[1];
+        char pp[1200]; snprintf(pp, sizeof pp, "%s/profile.tsv", base);
         if (game_profile_load(pp)) die("[RED] game profile missing or refused: %s", pp);
-        const char *slash = strrchr(argv[1], '/'), *want = slash ? slash + 1 : argv[1];
+        if (!strncmp(dm_game_cur()->id, "0000000000000000", 16))   // the no-game fallback: a pack from an older porter
+            die("[RED] game profile: %s carries no profile.tsv (a pack made before P4.1): re-import the pack", pp);
+        const char *slash = strrchr(base, '/'), *want = slash ? slash + 1 : base;
         if (strcasecmp(want, dm_game_cur()->id)) LOG("[RED] game profile: title id %s but the folder is %s (continuing)", dm_game_cur()->id, want);
     }
 #endif
