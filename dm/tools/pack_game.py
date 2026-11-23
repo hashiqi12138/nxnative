@@ -129,7 +129,15 @@ def build(pack, title, out):
     tar_path = out + '.tar.tmp'
     n = 0
     with tarfile.open(tar_path, 'w', format=tarfile.GNU_FORMAT) as tf:
-        for name in sorted(os.listdir(pack)):
+        # The small metadata members go first, RomFS and the rest after them. A reader that wants only the pack's
+        # names (pack_server.pack_titles, for the library's list) then finds nx2a-data.json within the first
+        # kilobyte instead of walking a multi-GB tar to the end, where the alphabetical order used to put it
+        # (measured: Celeste's manifest sat at offset 1.26 GB). The import reads the whole tar either way, so the
+        # order costs it nothing.
+        names = sorted(os.listdir(pack))
+        first = [n_ for n_ in names if n_ in ('nx2a-data.json', 'profile.tsv', 'env.txt', 'settings.txt', 'icon.jpg')]
+        rest = [n_ for n_ in names if n_ not in first]
+        for name in first + rest:
             if name == 'dm.files.tsv':
                 continue   # the manifest rides in the header, not the body: the app must not unpack it
             tf.add(os.path.join(pack, name), arcname=name)

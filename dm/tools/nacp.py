@@ -17,18 +17,50 @@ def name(path):
     """The title area holds 0x300 bytes per language (name 0x200 + publisher 0x100); take the first non-empty one (0 = American English); a missing file or no sensible name returns an empty string"""
     p = Path(path)
     if not p.is_file(): return ''
-    b = p.read_bytes(); t = b[:0x3000]
+    t = _title_area(p.read_bytes())
+    for i in range(len(t) // 0x300):
+        n = _entry_name(t, i)
+        if n: return n
+    return ''
+
+
+def _title_area(b):
+    """The NACP title area (0x300 bytes per language), inflated when the SDK compressed it."""
+    t = b[:0x3000]
     if len(b) >= 2:
         try:   # newer SDKs compress the title area: a u16 size + raw deflate, inflating to 32 languages × 0x300 (Mario 1.2.1 does); inflate no further than that (a crafted size could inflate about 1,000 times)
             d = zlib.decompressobj(-15); z = d.decompress(b[2:2 + struct.unpack_from('<H', b)[0]], 0x6000 + 1)
             if d.eof and len(z) == 0x6000: t = z
         except zlib.error: pass   # not compressed
-    for i in range(len(t) // 0x300):
-        n = t[i * 0x300:i * 0x300 + 0x200].split(b'\0', 1)[0]
-        if not n: continue
-        try: n = n.decode('utf-8')
-        except UnicodeDecodeError: return ''
-        return n if n.isprintable() else ''
+    return t
+
+
+def _entry_name(t, i):
+    """The name of language slot i in the title area, or '' when the slot is empty or not printable UTF-8."""
+    n = t[i * 0x300:i * 0x300 + 0x200].split(b'\0', 1)[0]
+    if not n: return ''
+    try: n = n.decode('utf-8')
+    except UnicodeDecodeError: return ''
+    return n if n.isprintable() else ''
+
+
+# The slots a Chinese name may sit in, best first: Simplified before Traditional. The order is spelled out rather than
+# derived from LANGUAGES, because LANGUAGES lists zh-Hant (slot 13) before zh-Hans (slot 14) and a game that carries
+# both would then be titled in Traditional while the app's own UI is Simplified (measured on Breath of the Wild 1.9.0
+# and Tears of the Kingdom 1.4.3, which fill both slots).
+ZH_SLOTS = tuple(i for i, (code, _) in enumerate(LANGUAGES) if code in ('zh-Hans', 'zh-Hant'))
+ZH_SLOTS = tuple(sorted(ZH_SLOTS, key=lambda i: 0 if LANGUAGES[i][0] == 'zh-Hans' else 1))
+
+
+def name_zh(path):
+    """The game's Chinese name from the NACP (Simplified preferred, Traditional as the fallback); '' when the game carries neither.
+    The title area lists one entry per language in LANGUAGES order, so the slot index is the language's position there."""
+    p = Path(path)
+    if not p.is_file(): return ''
+    t = _title_area(p.read_bytes())
+    for i in ZH_SLOTS:
+        n = _entry_name(t, i)
+        if n: return n
     return ''
 
 

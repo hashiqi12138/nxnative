@@ -14,7 +14,8 @@ import { picker } from '@kit.CoreFileKit';
 import { router } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { Bg, Text as TextToken, Semantic, CoverPalette, Space, Font, Radius, Motion, Size } from '../theme/Tokens';
-import { GameEntry, gamesDir, listGames, deleteGame, humanSize, writeMeta, ImportStatus, verifyGame, gameVersion, VerifyResult, setKept, isStartable } from './GameLibrary';
+import { GameEntry, gamesDir, listGames, deleteGame, humanSize, writeMeta, ImportStatus, verifyGame, gameVersion, VerifyResult, setKept, isStartable, displayName, readPackName, readPackNameZh } from './GameLibrary';
+import { perfBadge, perfGrade } from './GamePerf';
 import { readPackHeader, importPack, readStamp, writeStamp, PackInfo, ImportProgress } from './PackImport';
 import { saveDir, backupDir, packSave, importSave, readSaveHeader, saveSize, hasBackup, SaveInfo, SaveProgress } from './SaveData';
 import { GameCard, CardState } from '../components/GameCard';
@@ -226,15 +227,16 @@ struct LibraryPage {
       this.pickPack();
       return;
     }
-    const g: GameEntry = cell.game as GameEntry;
-    // Checked on disk, not from the card's cached hasData: handing an unusable folder to Index lands the player on
-    // the self-test scene with the built-in list, which reads as "the launch did nothing" (Celeste's folder has
-    // RomFS/ but no mods/, measured 2026-11-21).
-    if (!isStartable(g.root)) {
-      this.showToast('游戏数据不完整，请重新导入');
-      return;
-    }
-    this.launch(g);
+    // A tap opens the detail sheet rather than launching straight away.
+    //
+    // It used to launch: tap = start, long-press 600 ms = details. That is the home-screen idiom, but nobody finds a
+    // long press, so tapping a card felt like "where is the info?" and, on a playable game, started it by accident.
+    // The sheet already carries the facts, the check, keep/delete and a 启动游戏 button (GameDetailSheet), so a tap
+    // is now the safe, expected action and starting the game is an explicit choice made there.
+    //
+    // Resolved by title, not read off the captured cell: see openDetailByTitle for the re-sort that made a stale
+    // closure open the wrong game.
+    this.openDetailByTitle((cell.game as GameEntry).titleId);
   }
 
   /**
@@ -345,7 +347,11 @@ struct LibraryPage {
         this.importFile = p.currentName;
       });
       writeStamp(dst, info.stamp);
-      writeMeta(dst, info.stamp, info.title, ImportStatus.doneBytes, true, '');
+      // The cache is filled from the pack the import just unpacked, not from the header: `info.title` is the 16-hex
+      // title ID, so writing it as the name left every freshly imported game titled with its ID until the stamp
+      // changed again (the cache is trusted while the stamp matches). readPackName / readPackNameZh are the readers
+      // listGames uses on a cold walk, so an import and a later re-scan now agree.
+      writeMeta(dst, info.stamp, readPackName(dst), ImportStatus.doneBytes, true, '', readPackNameZh(dst));
       ImportStatus.finish();
       this.stopImportTimer();
       this.importPct = 100;
@@ -435,12 +441,33 @@ struct LibraryPage {
 
   /** Open the sheet for one game. */
   private openDetail(g: GameEntry): void {
+    // The title is logged because a wrong card opening was reported (long-pressing Celeste showed Tears of the
+    // Kingdom): the sheet can only show what it is handed, so the id here settles whether the tap bound to the wrong
+    // cell or the sheet read the wrong entry.
+    dmhost.log(`library: openDetail ${g.titleId} (${g.name})`);
     this.detailGame = g;
     this.detailVersion = gameVersion(g.root);
     this.detailVerifyNote = '';
     this.detailVerifyOk = true;
     this.detailVerifying = false;
     this.detailVisible = true;
+  }
+
+  /**
+   * Open the sheet for the game with this title, resolved against the list as it is now.
+   *
+   * The card's action has to follow what is on screen. A closure that captured the Cell ForEach built when the grid
+   * was first drawn keeps pointing at that cell after the list is re-sorted, and a re-import always re-sorts (a new
+   * stamp floats to the top): long-pressing Celeste then opened Tears of the Kingdom (measured 2026-11-23). Looking
+   * the entry up by title at call time cannot go stale.
+   */
+  private openDetailByTitle(titleId: string): void {
+    const hit: GameEntry | undefined = this.games.find((g: GameEntry): boolean => g.titleId === titleId);
+    if (hit !== undefined) {
+      this.openDetail(hit);
+      return;
+    }
+    dmhost.log(`library: openDetailByTitle ${titleId}: not in the list any more`);
   }
 
   /**
@@ -850,8 +877,17 @@ struct LibraryPage {
         onImportSave: () => this.importSave(),
         onLaunch: () => {
           const g: GameEntry | null = this.detailGame;
+          if (g === null) return;
+          // Checked on disk, not from the card's cached hasData: handing an unusable folder to Index lands the player
+          // on the self-test scene, which reads as "the launch did nothing". This check used to sit in activate(),
+          // back when a tap launched the game; a tap opens the sheet now, so the check belongs here, on the one
+          // action that actually starts it.
+          if (!isStartable(g.root)) {
+            this.showToast('游戏数据不完整，请重新导入');
+            return;
+          }
           this.detailVisible = false;
-          if (g !== null) this.launch(g);
+          this.launch(g);
         },
         onVerify: () => this.verifyDetail(),
         onKeptChange: (on: boolean) => this.setKept(on),
@@ -911,7 +947,8 @@ struct LibraryPage {
             })
           } else {
             GameCard({
-              name: (cell.game as GameEntry).name,
+              // the card shows the game's own Chinese title when its pack carries one, its pack name otherwise
+              name: displayName(cell.game as GameEntry),
               titleId: (cell.game as GameEntry).titleId,
               sizeLabel: humanSize((cell.game as GameEntry).sizeBytes),
               iconPath: (cell.game as GameEntry).iconPath,
@@ -921,8 +958,18 @@ struct LibraryPage {
               // and are readable in the detail sheet, which lists every badge with its full sentence.
               badges: badgesFor(cell.game as GameEntry, { save: false }),
               badgeSlots: this.columns >= 4 ? 2 : 3,
+              // the measured frame rate, or nothing at all when the game was never measured
+              perfLabel: perfBadge((cell.game as GameEntry).perf),
+              perfGrade: perfGrade((cell.game as GameEntry).perf),
               onActivate: () => this.activate(cell),
-              onDetails: () => this.openDetail(cell.game as GameEntry)
+              // Looked up by the title this cell is showing, not read off the captured `cell`.
+              //
+              // The closure captured the Cell that ForEach built when the grid was first drawn. When the list was
+              // re-sorted (a re-import gives a new stamp, so the sort order changes) the grid reused the old builders
+              // with the new positions: long-pressing the Celeste card opened Tears of the Kingdom (measured
+              // 2026-11-23, `openDetail 0100F2C0115B6000` for a tap on Celeste's slot). Resolving the entry from
+              // titleId at call time makes the action follow the card that is actually on screen.
+              onDetails: () => this.openDetailByTitle((cell.game as GameEntry).titleId)
             })
           }
         }

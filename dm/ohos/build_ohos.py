@@ -153,6 +153,11 @@ LIBS = ['-lvulkan', '-lEGL', '-lGLESv3', '-lhilog_ndk.z', '-lohaudio', '-lnative
         # qos: OH_QoS_SetThreadQoS, the platform's thread scheduling class (compat/darwin_compat.c maps Mach's
         # time-constraint policy onto it; without it every frame thread ran at the default priority)
         '-lqos',
+        # NOT -lchild_process. Linking it left OH_Ability_StartNativeChildProcess as an UNDEFINED dynamic symbol in
+        # libdmhost.so (measured on the packed HAP: `U OH_Ability_StartNativeChildProcess`), and the device's loader
+        # does not resolve that for this app — dlopen("libdmhost.so") then failed outright, so the whole native layer
+        # went silent: no dmhost log at all and NAPI never registered. Anything that needs those entry points must
+        # resolve them with dlopen/dlsym at call time, the way demo_ohos.c gets libvulkan.
         '-lz', '-lm', '-ldl']
 LDFLAGS = [TARGET, f'--sysroot={SYSROOT}', '-fuse-ld=lld', '-Wl,--error-limit=0', '-Wl,-z,max-page-size=16384', '-Wl,--build-id', '-Wl,-z,nostart-stop-gc',
            '-Wl,--no-undefined']   # the loader on the device has no weak fallback: every symbol must resolve at link time

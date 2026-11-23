@@ -274,10 +274,27 @@ struct Index {
     });
   }
 
-  /** End the process so the next launch starts on the library. */
+  /**
+   * Leave the game: run the host's graceful exit, then end the process.
+   *
+   * Why the process ends at all: the guest owns its native thread for the life of the process (napi_bridge.c's
+   * g_game_started is a one-shot latch, and main.c's nnMain never returns), so there is no "stop the guest and stay"
+   * path in this host. The next launch starts on pages/LibraryPage (EntryAbility.ets:21 loads it unconditionally), so
+   * ending the process *is* returning to the library — the user sees the game close and the library open again.
+   *
+   * dmhost.stopGame() runs hle_lifecycle.c's dm_host_shutdown: the save counter, recording and cheats state are
+   * flushed, audio is suspended, and the graphics pipeline is drained and its archive written, all before _exit(0).
+   * terminateSelf() below is the fallback for the case where that drain is stuck past its own deadline.
+   */
   private exitToLibrary(): void {
     this.confirmExit = false;
-    dmhost.log('library: terminating to return to the library');
+    dmhost.log('library: leaving the game; graceful exit then terminate');
+    try {
+      dmhost.stopGame();   // does not return when the graceful exit succeeds
+    } catch (e) {
+      const why: string = e instanceof Error ? e.message : JSON.stringify(e);
+      dmhost.log(`library: stopGame threw: ${why}`);
+    }
     try {
       const ctx = this.getUIContext().getHostContext();
       const abilityCtx = ctx as common.UIAbilityContext;
@@ -1467,6 +1484,11 @@ struct Index {
       this.isGame = true;
       this.status = 'dm: game';
       dmhost.log('starting the game');
+      // Stop the self-test scene first. Without this the demo thread (demo_ohos.c's g_run) keeps presenting to the
+      // same OHNativeWindow while the guest builds its own surface and swapchain on it — two presenters on one
+      // window, which is the intermittent black screen this path was reported with. The no-game branch below has
+      // always called it; this branch was the one that forgot.
+      dmhost.stopDemo();
       this.loadPadConfig(root);   // P1.4: the pack's default layout and the user's saved layout (async, draws when loaded)
       dmhost.startGame(root, files + '/save', cache);
     } else {
@@ -1828,7 +1850,7 @@ struct Index {
               .border({ width: { top: 1 }, color: Semantic.borderSubtle })
 
               // 4. 安全退出
-              Button('退出到游戏库')
+              Button('退出游戏')
                 .width('100%').height(42).fontSize(Font.label).fontWeight(FontWeight.Medium)
                 .fontColor(Semantic.danger).backgroundColor('rgba(239,68,68,0.14)')
                 .border({ width: 1, color: Semantic.danger, radius: Radius.md })
@@ -1854,7 +1876,7 @@ struct Index {
       ConfirmDialog({
         visible: this.confirmExit,
         title: '退出游戏？',
-        body: '将关闭游戏并返回游戏库。未保存的进度会丢失。',
+        body: '将关闭游戏并退出应用，下次打开回到游戏库。未保存的进度会丢失。',
         confirmLabel: '退出',
         cancelLabel: '继续游戏',
         destructive: true,

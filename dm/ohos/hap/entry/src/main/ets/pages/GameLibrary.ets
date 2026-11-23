@@ -12,11 +12,67 @@
 
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
+import { deviceInfo } from '@kit.BasicServicesKit';
+import dmhost from 'libdmhost.so';
+import { PerfRecord, readPerf, bestFor } from './GamePerf';
 
-/** One installed game, as the library view needs it. */
+/**
+ * This device's model, so a game measured on another phone shows the number that applies to this one.
+ * deviceInfo.productModel is the same string perf_capture.py writes from `param get const.product.model`
+ * (HBN-AL80 here); an empty value just means bestFor falls back to the first sample.
+ */
+const DEVICE_MODEL: string = deviceInfo.productModel ?? '';
+
+/**
+ * The title IDs installed, with their names, WITHOUT walking any tree.
+ *
+ * For the callers that only need "which games are there and what are they called" — the settings page's save list is
+ * the one that matters. listGames() is not usable there: on a cache miss it calls treeSize(), which walks every file
+ * under a game (41k of them for a 14 GB pack) with no yield, so it blocks the UI thread and the page appeared to hang
+ * (reported 2026-11-22). A name is two reads of nx2a-data.json; a size is the whole tree, and this does not need it.
+ *
+ * sizeBytes is -1: not measured, rather than 0, which would read as an empty game.
+ */
+export function listGameNames(filesDir: string): GameEntry[] {
+  const root: string = gamesDir(filesDir);
+  const out: GameEntry[] = [];
+  let names: string[] = [];
+  try {
+    names = fs.listFileSync(root);
+  } catch (e) {
+    return out;
+  }
+  for (const titleId of names) {
+    if (!/^[0-9A-F]{16}$/.test(titleId)) continue;
+    const game: string = root + '/' + titleId;
+    const name: string = readPackName(game);
+    out.push({
+      titleId: titleId,
+      name: name.length > 0 ? name : titleId,
+      nameZh: readPackNameZh(game),
+      root: game,
+      stamp: '',
+      sizeBytes: -1,        // not measured here: see the comment above
+      hasData: isStartable(game),
+      iconPath: '',
+      kept: false,
+      stale: false,
+      perf: null
+    });
+  }
+  return out;
+}
+
+
 export interface GameEntry {
   titleId: string;      // the directory name, e.g. 01007EF00011E000
   name: string;         // a display name, from nx2a-data.json when it names one
+  /**
+   * The game's own Chinese title, from nx2a-data.json's `name_zh` (which the porter takes from the game's NACP).
+   * '' when the pack carries none: an older pack has no such key, and a game with no Chinese entry in its control
+   * data has no Chinese name to show. Callers pick it with displayName() so a missing one never blanks the card.
+   */
+  nameZh: string;
   root: string;         // the directory handed to startGame
   stamp: string;        // the pack stamp this data came from
   sizeBytes: number;    // bytes on disk (du-style sum of the tree)
@@ -24,8 +80,25 @@ export interface GameEntry {
   iconPath: string;     // <root>/icon.jpg when the pack carries one, else ''
   /** The player locked this build: a host update does not rebuild it (NX Play's "Kept"). */
   kept: boolean;
-  /** The build predates the host code it was made from, so it may lack fixes the host now has. */
+  /**
+   * The build predates the host code it was made from, so it may lack fixes the host now has.
+   */
   stale: boolean;
+  /**
+   * The measurement to show for this device, or null when the game was never measured. Read from <root>/perf.json,
+   * which survives a re-import because PackImport only clears mods/, RomFS/ and aoc/.
+   */
+  perf: PerfRecord | null;
+}
+
+/**
+ * The name a card shows: the Chinese title when the pack carries one, the pack's own name next, and the title ID as
+ * the last resort. One place decides it, so every surface (grid, detail sheet, import banner) agrees.
+ */
+export function displayName(g: GameEntry): string {
+  if (g.nameZh.length > 0) return g.nameZh;
+  if (g.name.length > 0) return g.name;
+  return g.titleId;
 }
 
 /**
@@ -152,6 +225,8 @@ function isStaleBuild(root: string): boolean {
 interface GameMeta {
   stamp: string;
   name: string;
+  /** The pack's Chinese title; absent in a cache written before this field existed, which reads as no Chinese name. */
+  nameZh?: string;
   sizeBytes: number;
   hasData: boolean;
   icon: string;
@@ -262,12 +337,15 @@ function readMeta(root: string): GameMeta | null {
     const j = JSON.parse(text) as Record<string, Object>;
     const stamp = j['stamp'];
     const name = j['name'];
+    const nameZh = j['nameZh'];
     const size = j['sizeBytes'];
     const has = j['hasData'];
     const icon = j['icon'];
     return {
       stamp: typeof stamp === 'string' ? stamp : '',
       name: typeof name === 'string' ? name : '',
+      // a cache written before this field existed has no key: '' reads as "no Chinese name", never as a stale one
+      nameZh: typeof nameZh === 'string' ? nameZh : '',
       sizeBytes: typeof size === 'number' ? size : 0,
       hasData: has === true,
       icon: typeof icon === 'string' ? icon : ''
@@ -282,8 +360,8 @@ function readMeta(root: string): GameMeta | null {
  * library after a real walk that found no cache.
  */
 export function writeMeta(root: string, stamp: string, name: string, sizeBytes: number,
-                          hasData: boolean, icon: string): void {
-  const meta: GameMeta = { stamp: stamp, name: name, sizeBytes: sizeBytes, hasData: hasData, icon: icon };
+                          hasData: boolean, icon: string, nameZh: string = ''): void {
+  const meta: GameMeta = { stamp: stamp, name: name, nameZh: nameZh, sizeBytes: sizeBytes, hasData: hasData, icon: icon };
   try {
     const f = fs.openSync(root + META_FILE, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
     try {
@@ -336,11 +414,18 @@ function treeSize(path: string, budget: number): number {
       }
     }
   }
+  // A walk that ran out of budget returns -1, not the partial sum it had counted so far.
+  //
+  // The partial sum is a plausible-looking number that is simply wrong, and the library then shows it as the game's
+  // size: Tears of the Kingdom read "4.3 GB" against a real 17.65 GB after an incremental import (measured
+  // 2026-11-23) because its 41k files did not fit the 60 s budget. -1 is what humanSize() already renders as
+  // "未测", so an incomplete walk now says so instead of lying.
+  if (stack.length > 0 || seen >= budget) return -1;
   return total;
 }
 
 /** Read the pack's own metadata file when it names a display name. */
-function readPackName(root: string): string {
+export function readPackName(root: string): string {
   try {
     const text: string = fs.readTextSync(root + '/nx2a-data.json');
     const j: object = JSON.parse(text) as object;
@@ -351,6 +436,26 @@ function readPackName(root: string): string {
     if (typeof t === 'string' && t.length > 0) return t;
   } catch (e) {
     // no metadata, or it has no name: the title ID stands in
+  }
+  return '';
+}
+
+/**
+ * The pack's Chinese title, from nx2a-data.json's `name_zh`.
+ *
+ * The porter writes that key from the game's own control data (nacp.name_zh), so it is the publisher's title, not a
+ * translation this app made up. '' when the key is absent: a pack built before the key existed, or a game whose NACP
+ * has no Chinese entry. Both cases must stay silent rather than fall back to a guess.
+ */
+export function readPackNameZh(root: string): string {
+  try {
+    const text: string = fs.readTextSync(root + '/nx2a-data.json');
+    const j: object = JSON.parse(text) as object;
+    const rec = j as Record<string, Object>;
+    const n = rec['name_zh'];
+    if (typeof n === 'string' && n.length > 0) return n;
+  } catch (e) {
+    // no metadata, or an older pack without the key: no Chinese name, which displayName() handles
   }
   return '';
 }
@@ -391,12 +496,14 @@ export function listGames(filesDir: string): GameEntry[] {
 
     const cached: GameMeta | null = readMeta(root);
     let name: string = '';
+    let nameZh: string = '';
     let size: number = 0;
     let hasData: boolean = false;
     let icon: string = '';
 
     if (cached !== null && cached.stamp === stamp) {
       name = cached.name;
+      nameZh = cached.nameZh !== undefined ? cached.nameZh : '';
       size = cached.sizeBytes;
       hasData = cached.hasData;
       icon = cached.icon;
@@ -406,25 +513,31 @@ export function listGames(filesDir: string): GameEntry[] {
       const nowStartable: boolean = isStartable(root);
       if (nowStartable !== hasData) {
         hasData = nowStartable;
-        writeMeta(root, stamp, name, size, hasData, icon);
+        writeMeta(root, stamp, name, size, hasData, icon, nameZh);
       }
     } else {
       // no cache, or it describes a different pack: walk once and remember the answer
       hasData = isStartable(root);
       name = readPackName(root);
-      size = treeSize(root, 60000);
+      nameZh = readPackNameZh(root);
+      // 400k entries. Measured on the device 2026-11-23: Tears of the Kingdom holds 306,955 entries (304,281 of
+      // them files), not the ~41k the earlier 60k budget assumed — so its walk never finished and its card said
+      // "未测". This runs once per pack (the answer is cached in .meta.json), so a few seconds for a real size is the
+      // right trade; the budget is a runaway guard, not a performance limit.
+      size = treeSize(root, 400000);
       icon = '';
       try {
         if (fs.accessSync(root + '/icon.jpg')) icon = 'icon.jpg';
       } catch (e) {
         icon = '';
       }
-      writeMeta(root, stamp, name, size, hasData, icon);
+      writeMeta(root, stamp, name, size, hasData, icon, nameZh);
     }
 
     out.push({
       titleId: titleId,
       name: name.length > 0 ? name : titleId,
+      nameZh: nameZh,
       root: root,
       stamp: stamp,
       sizeBytes: size,
@@ -435,11 +548,15 @@ export function listGames(filesDir: string): GameEntry[] {
       kept: hasFile(root + '/keep'),
       // The build is older than the host code it was made from. The mods' own stamp is the build's date; the host
       // library's mtime is the code's. A missing pair says nothing, so it is not stale.
-      stale: isStaleBuild(root)
+      stale: isStaleBuild(root),
+      // Read on every scan rather than cached: perf.json is small, it changes without the pack's stamp changing (a
+      // fresh measurement never touches the data), and a cached copy would show a stale number after a re-measure.
+      perf: bestFor(readPerf(root), DEVICE_MODEL)
     });
   }
   // newest stamp first: a fresh import floats to the top
   out.sort((a: GameEntry, b: GameEntry): number => a.stamp < b.stamp ? 1 : (a.stamp > b.stamp ? -1 : 0));
+  dmhost.log(`library: listGames -> ${out.length} game(s): ${out.map((g: GameEntry): string => g.titleId + (g.perf !== null ? '(perf)' : '')).join(' ')}`);
   return out;
 }
 
@@ -496,6 +613,9 @@ export function removeTree(path: string): boolean {
 
 /** A human size for the library row. */
 export function humanSize(bytes: number): string {
+  // -1 means "not measured" (treeSize ran out of budget), and must not print as "-1 B": that reads as a broken
+  // value rather than an unknown one.
+  if (bytes < 0) return '未测';
   if (bytes >= 1 << 30) return `${(bytes / (1 << 30)).toFixed(1)} GB`;
   if (bytes >= 1 << 20) return `${(bytes / (1 << 20)).toFixed(0)} MB`;
   if (bytes >= 1 << 10) return `${(bytes / (1 << 10)).toFixed(0)} KB`;

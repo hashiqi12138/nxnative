@@ -11,6 +11,7 @@
 
 import { Bg, Text as TextToken, Semantic, CoverPalette, Space, Font, Radius, Motion, Size } from '../theme/Tokens';
 import { BadgeSpec, BadgeFit, fitBadges } from './GameBadges';
+import dmhost from 'libdmhost.so';
 
 /** What the card is doing right now. */
 export enum CardState {
@@ -56,6 +57,14 @@ export struct GameCard {
    * card is in, and the caller can report any long job without inventing a CardState for it.
    */
   @Prop progress: number = -1;
+  /**
+   * The measured frame rate as a short label ("60 fps"), or '' when the game was never measured. Shown as a badge on
+   * the artwork, in the severity colour, because "can this run" is the first thing a player wants from a card and a
+   * number answers it faster than a sentence does.
+   */
+  @Prop perfLabel: string = '';
+  /** 'good' | 'fair' | 'poor' | 'none' — the badge's colour, from GamePerf.perfGrade. */
+  @Prop perfGrade: string = 'none';
   /** Called when the card is activated (tap, or the gamepad's A). */
   onActivate: () => void = () => {};
   /** Called on a long press (600 ms) or the gamepad's menu key. */
@@ -136,6 +145,18 @@ export struct GameCard {
     return fitBadges(this.badges, this.badgeSlots);
   }
 
+  /**
+   * The perf badge's colour: green when the frame rate is comfortable, amber when it is marginal, red when it is
+   * below the 30 fps the games themselves target. A colour per grade rather than a computed ramp, so the three cases
+   * stay distinguishable at arm's length on a small badge.
+   */
+  private perfColor(): string {
+    if (this.perfGrade === 'good') return Semantic.success;
+    if (this.perfGrade === 'fair') return Semantic.warning;
+    if (this.perfGrade === 'poor') return Semantic.danger;
+    return TextToken.tertiary;
+  }
+
   build() {
     // The card is a cover plus a centred caption beneath it; both live in one column so the grid's cells stay
     // one rectangle (the Grid measures the cell before the children, and a caption outside the card's own bounds
@@ -179,6 +200,23 @@ export struct GameCard {
           .margin({ left: Space.s1, top: Space.s1 })
           .width(this.coverSize - Space.s2)
           .justifyContent(FlexAlign.Start)
+        }
+        // ---- the measured frame rate, top right, over the artwork ----
+        // A number answers "can this run?" faster than a sentence, and putting it on the cover keeps the card's
+        // height fixed (the same reason as the badges). '' means the game was never measured, and the badge is not
+        // drawn at all rather than showing a zero — a missing measurement must not look like a bad one.
+        if (this.perfLabel.length > 0) {
+          Text(this.perfLabel)
+            .fontSize(Font.caption)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.perfColor())
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .backgroundColor('rgba(0,0,0,0.62)')
+            .borderRadius(Radius.sm)
+            .position({ x: 0, y: 0 })
+            .margin({ left: this.coverSize - 76, top: Space.s1 })
+            .width(68)
+            .textAlign(TextAlign.Center)
         }
         // ---- S5: a running job's progress, at the bottom of the artwork ----
         // Same reason as the badges: a launch or a build must not resize the card. Drawn from `progress` rather
@@ -248,9 +286,22 @@ export struct GameCard {
       if (this.state === CardState.Incomplete || this.state === CardState.Launching) return;
       this.onActivate();
     })
-    .gesture(
-      LongPressGesture({ repeat: false, duration: 600 })
+    // Long press opens the detail sheet.
+    //
+    // parallelGesture, not gesture: the card sits inside a Grid that is itself inside a scroll container, and a plain
+    // `.gesture()` loses the long press to that parent's pan recogniser — the press is cancelled before the 500 ms
+    // threshold is reached (measured 2026-11-23: `uitest uiInput longClick` and a held `swipe` on the Celeste card
+    // both produced nothing, while a tap worked). A parallel recogniser competes with the pan instead of being
+    // cancelled by it, so a hold is recognised and a drag still scrolls.
+    //
+    // onActionEnd, not onAction: the action has to run on the release, or ArkUI also routes that release through
+    // onClick and the tap handler runs behind the sheet.
+    .parallelGesture(
+      LongPressGesture({ repeat: false, duration: 500 })
         .onAction(() => {
+          dmhost.log(`card: long press on ${this.titleId}`);
+        })
+        .onActionEnd(() => {
           if (this.state === CardState.Launching) return;
           this.onDetails();
         })

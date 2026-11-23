@@ -14,7 +14,7 @@ import dmhost from 'libdmhost.so';
  */
 
 import { Bg, Text as TextToken, Semantic, Space, Font, Radius, Size, Motion } from '../theme/Tokens';
-import { humanSize, gamesSize, cacheSize, clearCache, listGames } from './GameLibrary';
+import { humanSize, gamesSize, cacheSize, clearCache, listGameNames, GameEntry } from './GameLibrary';
 import { listSaves, restoreBackup, SaveEntry } from './SaveData';
 import { runSaveSelfTest, SelfTestResult } from './SaveSelfTest';
 import { listInputDevices, DeviceRow, PAD_KEY_CANDIDATES, PadKeyMap } from './ControllerProbe';
@@ -187,9 +187,12 @@ export struct SettingsPage {
   private loadSaves(files: string): void {
     this.savesLoaded = false;
     setTimeout(() => {
-      const games = listGames(files);
+      // listGameNames, not listGames: this page needs the titles and their names, and listGames would walk
+      // every game's whole tree for a size it never shows (41k files for a 14 GB pack, no yield, on the
+      // UI thread - the reported hang). The cost here is two reads of nx2a-data.json per game.
+      const games: GameEntry[] = listGameNames(files);
       const nameOf: (titleId: string) => string = (titleId: string): string => {
-        const hit = games.find((g) => g.titleId === titleId);
+        const hit: GameEntry | undefined = games.find((g: GameEntry): boolean => g.titleId === titleId);
         return hit !== undefined ? hit.name : titleId;
       };
       this.saves = listSaves(files, nameOf);

@@ -39,7 +39,61 @@ def pack_info(path):
     stamp = h[24:24 + 48].split(b'\0')[0].decode('ascii', 'replace').strip()
     # the name is the pack's own nx2a-data.json, which costs a second read of the tar: the app shows the title ID
     # until it has imported it, and the library's label is the file name here
-    return {'title': title, 'stamp': stamp, 'bytes': os.path.getsize(path), 'file': os.path.basename(path)}
+    info = {'title': title, 'stamp': stamp, 'bytes': os.path.getsize(path), 'file': os.path.basename(path)}
+    info.update(pack_titles(path))
+    return info
+
+
+# How much of the container to read looking for nx2a-data.json. The porter writes that member first (pack_game.py
+# walks the pack folder with nx2a-data.json at its root), so it lands in the first few blocks; the cap keeps a pack
+# whose layout differs from making /list read gigabytes.
+MANIFEST_SCAN = 256 * 1024
+
+
+def pack_titles(path):
+    """The display names a container's nx2a-data.json carries: {'name': ..., 'name_zh': ...}, each key only when the
+    manifest has a non-empty one.
+
+    The 80-byte header holds no name, so this reads the tar stream until it meets the manifest member. A container
+    without one, or one whose manifest is past MANIFEST_SCAN, yields {}: the library then falls back to the file name,
+    exactly as it did before these keys existed.
+    """
+    try:
+        with open(path, 'rb') as f:
+            f.seek(HEADER)
+            buf = f.read(MANIFEST_SCAN)
+    except OSError:
+        return {}
+    pos = 0
+    while pos + 512 <= len(buf):
+        block = buf[pos:pos + 512]
+        if block[:512] == b'\0' * 512:   # the archive's two zero blocks
+            break
+        # ustar/GNU header: name at 0 (100), size at 124 (12, octal), typeflag at 156, prefix at 345 (155)
+        name = block[0:100].split(b'\0')[0].decode('utf-8', 'replace')
+        prefix = block[345:500].split(b'\0')[0].decode('utf-8', 'replace')
+        full = f'{prefix}/{name}' if prefix else name
+        raw_size = block[124:136].split(b'\0')[0].strip()
+        try:
+            size = int(raw_size, 8) if raw_size else 0
+        except ValueError:
+            return {}
+        body_at = pos + 512
+        if full.lstrip('./') == 'nx2a-data.json':
+            if body_at + size > len(buf):
+                return {}   # the manifest is larger than the scan window: no names rather than a truncated parse
+            try:
+                man = json.loads(buf[body_at:body_at + size].decode('utf-8'))
+            except (ValueError, UnicodeDecodeError):
+                return {}
+            out = {}
+            for key in ('name', 'name_zh'):
+                v = man.get(key)
+                if isinstance(v, str) and v:
+                    out[key] = v
+            return out
+        pos = body_at + ((size + 511) // 512) * 512   # tar pads every member to a 512-byte boundary
+    return {}
 
 
 def scan_games(folder):

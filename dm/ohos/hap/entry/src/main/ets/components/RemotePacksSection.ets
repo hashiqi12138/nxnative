@@ -6,17 +6,8 @@
 import dmhost from 'libdmhost.so';
 import { preferences } from '@kit.ArkData';
 import { Bg, Text as TextToken, Semantic, Space, Font, Radius, Size } from '../theme/Tokens';
-import { RemotePack, PREF_SOURCE, listRemote } from '../pages/RemoteLibrary';
+import { RemotePack, PREF_SOURCE, listRemote, remoteDisplayName } from '../pages/RemoteLibrary';
 import { RemoteDownloads, PackProgress, PackState, speedLabel, etaLabel, sizeLabel } from './RemoteDownloads';
-
-const KNOWN_TITLES: Record<string, string> = {
-  '01007EF00011E000': '塞尔达传说：旷野之息',
-  '0100F2C0115B6000': '塞尔达传说：王国之泪',
-  '01002B30028F6000': '蔚蓝 (Celeste)',
-  '0100000000010000': '超级马力欧 奥德赛',
-  '0100152000022000': '马力欧卡丁车 8 豪华版',
-  '01009B90006DC000': '密特罗德 生存恐惧'
-};
 
 @Component
 export struct RemotePacksSection {
@@ -97,10 +88,10 @@ export struct RemotePacksSection {
   }
 
   private friendlyName(r: PackProgress): string {
-    const key: string = r.pack.title.toUpperCase();
-    const mapped: string | undefined = KNOWN_TITLES[key];
-    if (mapped && mapped.length > 0) return mapped;
-    return r.pack.name.replace(/\.nxpk$/i, '');
+    // The server reads the game's own names out of the container's nx2a-data.json (pack_server.pack_titles), so the
+    // row shows the publisher's Chinese title where the pack has one. A pack or a server without them falls back to
+    // the file name. This replaces a six-entry table of title IDs that only ever knew the games it was typed for.
+    return remoteDisplayName(r.pack);
   }
 
   private paceLabel(r: PackProgress): string {

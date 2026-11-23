@@ -16,6 +16,9 @@ void dm_ohos_front_surface_lost(void);
 void dm_ohos_game_start(const char *root, const char *save, const char *temp);
 void dm_ohos_demo_start(void);
 void dm_ohos_demo_stop(void);
+// hle_lifecycle.c: the graceful exit — flushes the save counter, recording, cheats, audio, and drains the graphics
+// pipeline before the process ends. Declared here because the host's hle.h is not on this file's include path.
+void dm_host_shutdown(const char *why);
 static void dm_demo_start(void) { dm_ohos_demo_start(); }
 static void dm_demo_stop(void) { dm_ohos_demo_stop(); }
 
@@ -67,6 +70,16 @@ static napi_value js_demo(napi_env env, napi_callback_info info) {
 }
 static napi_value js_demo_stop(napi_env env, napi_callback_info info) {
     (void)info; napi_value undef; napi_get_undefined(env, &undef); dm_demo_stop(); return undef;
+}
+// stopGame(): the player asked to leave the game. Runs the host's graceful exit (hle_lifecycle.c: flush the save
+// counter, recording and cheats state, suspend audio, drain the graphics pipeline, write the pipeline archive) and
+// then _exit(0). It never returns, so the caller cannot act on a return value: ArkTS calls terminateSelf() right
+// after it as a fallback for the case where the drain is stuck and the deadline path has not fired yet.
+static napi_value js_stop(napi_env env, napi_callback_info info) {
+    (void)info; napi_value undef; napi_get_undefined(env, &undef);
+    logi("napi: stopGame: the player is leaving; graceful exit");
+    dm_host_shutdown("user quit");   // does not return (_exit(0))
+    return undef;
 }
 
 // setPad(buttons: number, lx: number, ly: number, rx: number, ry: number): the ArkTS virtual gamepad's
@@ -141,7 +154,7 @@ EXTERN_C_START
 static napi_value dmhost_init(napi_env env, napi_value exports) {
     struct { const char *name; napi_callback fn; } fns[] = {
         {"setSurfaceId", js_set_surface}, {"surfaceLost", js_surface_lost}, {"startGame", js_start},
-        {"startDemo", js_demo}, {"stopDemo", js_demo_stop}, {"setPad", js_set_pad}, {"log", js_log},
+        {"startDemo", js_demo}, {"stopDemo", js_demo_stop}, {"stopGame", js_stop}, {"setPad", js_set_pad}, {"log", js_log},
         {"getFps", js_get_fps}, {"setAudioVolume", js_set_audio_volume}, {"setAudioMuted", js_set_audio_muted},
     };
     for (size_t i = 0; i < sizeof fns / sizeof fns[0]; i++) {

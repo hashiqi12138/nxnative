@@ -8,7 +8,8 @@
  */
 
 import { Bg, Text as TextToken, Semantic, CoverPalette, Space, Font, Radius, Motion, Z, Size } from '../theme/Tokens';
-import { GameEntry, humanSize } from '../pages/GameLibrary';
+import { GameEntry, humanSize, displayName } from '../pages/GameLibrary';
+import { PerfRecord, ms, pct, sceneLabel } from '../pages/GamePerf';
 
 /** One labelled line in the facts block. */
 interface Fact {
@@ -52,6 +53,17 @@ export struct GameDetailSheet {
     if (this.version.length > 0) out.push({ label: '版本', value: this.version });
     out.push({ label: '数据包', value: g.stamp.length > 0 ? g.stamp.substring(0, 12) : '未知' });
     out.push({ label: '状态', value: g.hasData ? '可运行' : '数据不完整' });
+    // The measurement, when there is one. A field the capture could not take reads 未测 (GamePerf.ms returns that
+    // for -1) rather than being left out: a missing number must not look like a good one.
+    const p: PerfRecord | null = g.perf;
+    if (p !== null) {
+      out.push({ label: '帧率', value: `${Math.round(p.fpsP50)} fps` });
+      out.push({ label: '帧时间', value: `${ms(p.frameMsP50)} (p50) / ${ms(p.frameMsP95)} (p95) / ${ms(p.frameMsMax)} (max)` });
+      out.push({ label: '掉帧率', value: pct(p.slowPct) });
+      if (p.gpuMsP50 >= 0) out.push({ label: 'GPU', value: ms(p.gpuMsP50) });
+      out.push({ label: '场景', value: sceneLabel(p) });
+      if (p.capturedAt.length > 0) out.push({ label: '测量时间', value: p.capturedAt.replace('T', ' ').substring(0, 16) });
+    }
     return out;
   }
 
@@ -102,7 +114,7 @@ export struct GameDetailSheet {
                     colors: [[CoverPalette.forTitle(this.game.titleId), 0.0],
                       [CoverPalette.darken(CoverPalette.forTitle(this.game.titleId), 0.55), 1.0]]
                   })
-                Text(CoverPalette.initialOf(this.game.name))
+                Text(CoverPalette.initialOf(displayName(this.game)))
                   .fontSize(28)
                   .fontWeight(FontWeight.Bold)
                   .fontColor('rgba(255,255,255,0.14)')
@@ -115,7 +127,7 @@ export struct GameDetailSheet {
               .clip(true)
 
               Column({ space: Space.s1 }) {
-                Text(this.game.name)
+                Text(displayName(this.game))
                   .fontSize(Font.title)
                   .fontColor(TextToken.primary)
                   .maxLines(2)
@@ -132,6 +144,23 @@ export struct GameDetailSheet {
               .alignItems(HorizontalAlign.Start)
             }
             .width('100%')
+
+            // 启动游戏, right under the title.
+            //
+            // It used to sit with the other actions near the bottom, and on a 373 vp window the sheet's six actions
+            // pushed it past the 85% height limit: the one button a player opens this sheet for needed a scroll to
+            // reach (measured 2026-11-23). Directly under the title it is on screen the moment the sheet opens,
+            // and the scroll below it only moves the facts and the secondary actions.
+            Button('启动游戏')
+              .fontSize(Font.body)
+              .fontColor(TextToken.inverse)
+              .backgroundColor(Semantic.accent)
+              .borderRadius(Radius.md)
+              .height(Size.buttonLg)
+              .width('100%')
+              .enabled(this.game.hasData && !this.verifying)
+              .opacity(this.game.hasData ? 1 : 0.4)
+              .onClick(() => this.onLaunch())
 
             // ---- facts ----
             Column({ space: Space.s2 }) {
@@ -200,16 +229,8 @@ export struct GameDetailSheet {
 
 
             // ---- actions ----
-            Button('启动游戏')
-              .fontSize(Font.body)
-              .fontColor(TextToken.inverse)
-              .backgroundColor(Semantic.accent)
-              .borderRadius(Radius.md)
-              .height(Size.buttonLg)
-              .width('100%')
-              .enabled(this.game.hasData && !this.verifying)
-              .opacity(this.game.hasData ? 1 : 0.4)
-              .onClick(() => this.onLaunch())
+            // 启动游戏 is not here: it is pinned below the scroll area (see the end of build()), because it is the
+            // one action a player opens this sheet for and it must not need a scroll to reach.
 
             // ---- saves (P2.3): exporting is what a player does before a risky thing, importing is the recovery
             // path, so both belong with the game rather than buried in settings ----

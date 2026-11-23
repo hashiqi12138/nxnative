@@ -82,3 +82,91 @@ pack dir's `shaders.dmsv`, `pack_game.py` a new `.nxpk` (new stamp), serve it wi
 download + import it; the host lib stays as installed. A **host-code change** is the lib-only HAP route above. The
 two are independent: a new entry HAP never touches the data, and a new pack never touches the lib. Verify a deploy
 in hilog: `shader bundle <path>: <n> shaders` and, for a bindless pool bundle, `bindless pools: set 4 made`.
+
+## Building and installing the HAP: the commands that actually work (measured 2026-11-22)
+
+The port is **decoupled**: the HAP carries one game-less **runtime library** and every game's constants ride in its
+pack's `profile.tsv`. `--game` is now optional and passing it builds the old per-game baked-in variant, so do not
+pass it for a normal build.
+
+### Environment (PowerShell, from the nested repo root)
+
+```powershell
+cd 'F:\新建文件夹\nx2ohos\nxnative'
+$env:PYTHONUTF8 = '1'
+$env:PYTHONIOENCODING = 'utf-8'
+$env:PYTHONPATH = 'F:\新建文件夹\.portshim'
+$env:TEMP = 'F:\新建文件夹\.tmp'      # the C: drive is nearly full; keep extraction off it
+$env:TMP  = 'F:\新建文件夹\.tmp'
+$env:DEVECO_HOME = 'E:\Program Files\Huawei\DevEco Studio'
+```
+
+### 1. Compile the runtime library
+
+```powershell
+python dm\ohos\build_ohos.py --lib          # -> dm/ohos/out/runtime/libdmhost.so (199 sources)
+```
+
+No `--game`: that is the runtime profile, which reads each game's constants from the pack. `--game <id>` builds the
+old builtin-profile variant (`out/<id>/libdmhost.so`) and is not what the shipped HAP carries.
+
+### 2. Pack the HAP
+
+```powershell
+$env:DM_VERSION_CODE = '2099000001'          # MUST exceed the versionCode installed on the device
+python dm\ohos\mkhap.py --out 'F:\新建文件夹\.screenshots\hap_build'
+```
+
+- `mkhap.py` finds DevEco itself (`DEVECO_HOME`, then `E:\Program Files\Huawei\DevEco Studio`, then
+  `D:\dev-echo\DevEco Studio`). **Signing needs DevEco's own keystore**, so a bare `hvigorw` run from a
+  command-line-tools SDK fails with `Algorithm HmacPBESHA256 not available` — that is a missing keystore, not a
+  code error. Always pack through `mkhap.py`, never by calling `hvigorw` directly.
+- hvigor refuses a non-ASCII project path, so `mkhap.py` copies the project to `F:\ohos_build_dmhost_runtime`
+  (`DM_HAP_BUILD_DIR` overrides). Do not build in place under `F:\新建文件夹`.
+- `--data <dir>` embeds game data in feature modules (`--split-mb`, default 3500). The normal path carries **no**
+  data: the device pulls a `.nxpk` over HTTP instead.
+
+### 3. Install and start
+
+```powershell
+$hdc = 'E:\Program Files\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe'
+& $hdc shell 'aa force-stop dev.eden_emu.ohos'
+& $hdc file send 'F:\新建文件夹\.screenshots\hap_build\dmhost-signed.hap' '/data/local/tmp/nx2a-e/entry-default-signed.hap'
+& $hdc shell 'bm install -p /data/local/tmp/nx2a-e -r'
+& $hdc shell 'aa start -b dev.eden_emu.ohos -a EntryAbility'
+```
+
+`mkhap.py --install` does steps 3 for you.
+
+### Version codes: read the device before choosing one
+
+`bm install` answers `code:9568263 / install version downgrade` when the HAP's `versionCode` is not above the
+installed one. The installed value is **not** in the short dump; it is the *last* `versionCode` pair:
+
+```powershell
+& $hdc shell 'bm dump -n dev.eden_emu.ohos' | Select-String '"versionCode"'
+```
+
+The leading `"versionCode": 0` pairs belong to inner records — the real one sits next to `minCompatibleVersionCode`
+(measured: `2099000000`). Set `DM_VERSION_CODE` above it. Without `DM_VERSION_CODE`, `mkhap.py` uses the current
+epoch seconds, which is usually *below* a device installed from an explicit override.
+
+### Verify what is actually on the device
+
+```powershell
+& $hdc shell 'pidof dev.eden_emu.ohos'                       # alive?
+& $hdc shell 'snapshot_display -f /data/local/tmp/ui.jpeg'   # 2844x1260 jpeg
+& $hdc file recv '/data/local/tmp/ui.jpeg' 'F:\新建文件夹\.screenshots\verify.jpeg'
+& $hdc shell 'uitest dumpLayout -p /data/local/tmp/layout.json'   # per-node text, no image model needed
+```
+
+`uitest dumpLayout` is the reliable way to assert UI text from a shell: the JSON carries each node's `text` and
+`pagePath`. Note its CJK comes back mojibake through PowerShell (`娓告垙搴?` = 游戏库) — decode the file as UTF-8
+rather than trusting the console rendering.
+
+### What the library shows, and why a name may stay English
+
+`GameEntry.nameZh` / `RemotePack.nameZh` come from the pack's `nx2a-data.json` `name_zh`, which the porter writes
+from the game's own NACP (`nacp.name_zh`, Simplified preferred). `displayName()` falls back to `name`, then the
+title ID. **A pack built before that key existed shows the English name — that is the designed fallback, not a
+fault.** To see a Chinese title, re-run the porter so the manifest carries `name_zh`.

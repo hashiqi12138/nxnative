@@ -17,9 +17,25 @@ import util from '@ohos.util';
 export interface RemotePack {
   title: string;      // the 16-hex title ID the container's header carries
   name: string;       // the file name, which the library shows until the pack is imported
+  /** The game's own name, from the pack's nx2a-data.json; '' when the server did not send one (an older server). */
+  packName: string;
+  /** The game's Chinese title from the pack's nx2a-data.json; '' when the pack carries none. */
+  nameZh: string;
   bytes: number;      // its size, for the row and the progress bar
   stamp: string;      // the container's stamp: equal to the sandbox's, the import is skipped
   url: string;        // '/packs/<file>' or '/pack.nxpk', relative to the server
+}
+
+/**
+ * The name a remote row shows: the game's Chinese title, then its own name, then the file name.
+ *
+ * The server reads both out of the container's nx2a-data.json (pack_server.pack_titles). A server too old to send
+ * them leaves both empty, and the row falls back to the file name it has always shown.
+ */
+export function remoteDisplayName(p: RemotePack): string {
+  if (p.nameZh.length > 0) return p.nameZh;
+  if (p.packName.length > 0) return p.packName;
+  return p.name.replace(/\.nxpk$/i, '');
 }
 
 /** The stored source: '' means none, so the library shows only what is installed. */
@@ -62,6 +78,10 @@ export async function listRemote(source: string): Promise<RemotePack[]> {
       const pack: RemotePack = {
         title: title,
         name: typeof file === 'string' ? file : title,
+        // the names inside the container, which a current server reads out of its nx2a-data.json; an older server
+        // sends neither, and both stay '' so the row keeps showing the file name
+        packName: typeof j['name'] === 'string' ? j['name'] as string : '',
+        nameZh: typeof j['name_zh'] === 'string' ? j['name_zh'] as string : '',
         bytes: typeof j['bytes'] === 'number' ? j['bytes'] as number : 0,
         stamp: typeof j['stamp'] === 'string' ? j['stamp'] as string : '',
         url: url
