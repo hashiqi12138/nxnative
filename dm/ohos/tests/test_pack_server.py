@@ -379,3 +379,141 @@ def test_packs_is_404_without_a_games_dir(server):
     port, _pack, _nxpk, _man = server
     status, _h, _b = get(port, '/packs/anything.nxpk')
     assert status == 404
+
+# ---- pack_titles: the display names inside a container ----
+#
+# The 80-byte header carries only the title ID, so /list reads the tar stream until it meets nx2a-data.json. These
+# tests build that tar by hand: a real one would need the porter, and what is under test here is the header parsing,
+# not the packer.
+
+def tar_header(name, size, prefix=''):
+    """A ustar header block, as tarfile writes it: name at 0, size at 124 (octal), prefix at 345."""
+    h = bytearray(512)
+    h[0:len(name)] = name.encode()
+    h[124:124 + len(b'%011o' % size)] = b'%011o' % size
+    h[156:157] = b'0'
+    h[257:263] = b'ustar\0'
+    if prefix:
+        h[345:345 + len(prefix)] = prefix.encode()
+    return bytes(h)
+
+
+def tar_member(name, body, prefix=''):
+    """One member: its header, its body, and the padding to the next 512-byte boundary."""
+    pad = (-len(body)) % 512
+    return tar_header(name, len(body), prefix) + body + b'\0' * pad
+
+
+def container(tmp_path, members, name='t.nxpk', stamp='abc'):
+    """An .nxpk: the 80-byte header, then the members."""
+    tar = b''.join(members) + b'\0' * 1024
+    header = b'NXPK' + bytes([1]) + b'\0\0\0' + b'T'.ljust(16, b'\0') + stamp.encode().ljust(48, b'\0') \
+        + struct.pack('<Q', len(tar))
+    p = tmp_path / name
+    p.write_bytes(header + tar)
+    return p
+
+
+def test_pack_titles_reads_the_name_and_the_chinese_name(pack_server, tmp_path):
+    man = json.dumps({'title_id': 'T', 'name': 'Celeste', 'name_zh': '蔚蓝'}).encode()
+    p = container(tmp_path, [tar_member('nx2a-data.json', man)])
+    assert pack_server.pack_titles(str(p)) == {'name': 'Celeste', 'name_zh': '蔚蓝'}
+
+
+def test_pack_titles_skips_members_before_the_manifest(pack_server, tmp_path):
+    # the porter writes env.txt and profile.tsv first in some pack layouts; the scan has to walk past them
+    man = json.dumps({'name': 'After'}).encode()
+    p = container(tmp_path, [tar_member('env.txt', b'X=1\n'), tar_member('RomFS/a.bin', b'A' * 700),
+                             tar_member('nx2a-data.json', man)])
+    assert pack_server.pack_titles(str(p)) == {'name': 'After'}
+
+
+def test_pack_titles_ignores_a_manifest_under_a_prefix(pack_server, tmp_path):
+    # pack_titles wants the manifest at the pack's root: a member whose ustar prefix puts it in a subdirectory is a
+    # different file, and the scan walks past it (the porter writes the root one).
+    man = json.dumps({'name': 'Prefixed'}).encode()
+    p = container(tmp_path, [tar_member('nx2a-data.json', man, prefix='deep')])
+    assert pack_server.pack_titles(str(p)) == {}
+
+
+def test_pack_titles_accepts_a_dot_slash_name(pack_server, tmp_path):
+    man = json.dumps({'name': 'Dotted'}).encode()
+    p = container(tmp_path, [tar_member('./nx2a-data.json', man)])
+    assert pack_server.pack_titles(str(p)) == {'name': 'Dotted'}
+
+
+def test_pack_titles_omits_a_key_that_is_absent_or_empty(pack_server, tmp_path):
+    # only the keys that carry a non-empty string: a reader falls back to `name` rather than showing an empty title
+    man = json.dumps({'name': 'Only', 'name_zh': ''}).encode()
+    p = container(tmp_path, [tar_member('nx2a-data.json', man)])
+    assert pack_server.pack_titles(str(p)) == {'name': 'Only'}
+
+
+def test_pack_titles_omits_a_key_that_is_not_a_string(pack_server, tmp_path):
+    man = json.dumps({'name': 7, 'name_zh': ['x']}).encode()
+    p = container(tmp_path, [tar_member('nx2a-data.json', man)])
+    assert pack_server.pack_titles(str(p)) == {}
+
+
+def test_pack_titles_is_empty_without_a_manifest(pack_server, tmp_path):
+    p = container(tmp_path, [tar_member('env.txt', b'X=1\n')])
+    assert pack_server.pack_titles(str(p)) == {}
+
+
+def test_pack_titles_is_empty_for_a_missing_file(pack_server, tmp_path):
+    assert pack_server.pack_titles(str(tmp_path / 'nope.nxpk')) == {}
+
+
+def test_pack_titles_is_empty_when_the_size_is_not_octal(pack_server, tmp_path):
+    # a corrupt header must not raise: the library falls back to the file name
+    bad = bytearray(tar_header('nx2a-data.json', 0))
+    bad[124:136] = b'zzzzzzzzzzz\0'
+    p = container(tmp_path, [bytes(bad)])
+    assert pack_server.pack_titles(str(p)) == {}
+
+
+def test_pack_titles_is_empty_when_the_manifest_body_is_beyond_the_scan(pack_server, tmp_path):
+    # the manifest claims more bytes than the scan window holds: no names rather than a truncated parse
+    p = container(tmp_path, [tar_header('nx2a-data.json', 300 * 1024)])
+    assert pack_server.pack_titles(str(p)) == {}
+
+
+def test_pack_titles_is_empty_when_the_manifest_is_not_json(pack_server, tmp_path):
+    p = container(tmp_path, [tar_member('nx2a-data.json', b'not json at all')])
+    assert pack_server.pack_titles(str(p)) == {}
+
+
+def test_pack_info_carries_the_names(pack_server, tmp_path):
+    man = json.dumps({'name': 'Celeste', 'name_zh': '蔚蓝'}).encode()
+    p = container(tmp_path, [tar_member('nx2a-data.json', man)], stamp='deadbeef')
+    info = pack_server.pack_info(str(p))
+    assert info['title'] == 'T'
+    assert info['stamp'] == 'deadbeef'
+    assert info['name'] == 'Celeste'
+    assert info['name_zh'] == '蔚蓝'
+    assert info['file'] == 't.nxpk'
+    assert info['bytes'] == p.stat().st_size
+
+
+def test_pack_info_is_none_for_a_file_that_is_not_a_container(pack_server, tmp_path):
+    p = tmp_path / 'x.nxpk'
+    p.write_bytes(b'not an nxpk at all, just some bytes that are long enough to be read')
+    assert pack_server.pack_info(str(p)) is None
+
+
+def test_pack_info_is_none_for_a_missing_file(pack_server, tmp_path):
+    assert pack_server.pack_info(str(tmp_path / 'nope.nxpk')) is None
+
+
+def test_list_carries_the_fields_the_library_reads(library_server):
+    # /list's contract: every entry names the container, the title inside it, its stamp and its size. `name` is
+    # present only when the container carries an nx2a-data.json (the fixture's are bare headers, so they carry none).
+    port, games = library_server
+    status, headers, body = get(port, '/list')
+    assert status == 200
+    entries = json.loads(body)
+    assert entries, 'the fixture games dir holds one container'
+    for e in entries:
+        assert set(e) >= {'title', 'stamp', 'bytes', 'file'}, e
+        assert e['file'].endswith('.nxpk'), e
+        assert e['bytes'] > 0, e
