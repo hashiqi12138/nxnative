@@ -161,8 +161,8 @@
           'typedef struct { int program; ' + ' '.join(f'{typ(next(d[k] for _, _, d in rows if k in d))}{fld(k)};' for k in scalars) + ' ' + ' '.join(f'const char *{fld(k)}[{sz[k] or 1}];' for k in ARR) + ' } dm_game_t;']
      ents = []
      for n, g, d in rows:
-@@ -245,7 +372,12 @@
-          f'#define DM_GAME_MEM_MAP_LIMIT {int(mml == "on")}',
+@@ -250,7 +377,12 @@
+          f'#define DM_GAME_MEM_MAP_LIMIT {-1 if not mml else int(mml == "on")}',
           f'#define DM_GAME_STDALLOC_CAP {int(g.get("stdalloc_cap", "0"), 0):#x}ull',   # StandardAllocator's address space with virtual address memory (hle_svc.c); 0 = what the alias region has room for
           f'#define DM_GAME_SCREEN_ASPECT {("off", "on").index(g.get("screen_aspect", "off"))}',   # stubs that follow a screen taller than 16:9 (DM_SCREEN_ASPECT): off / on
 -         f'#define DM_GAME_DISPLAY_VERSIONS {vers}',
@@ -175,7 +175,7 @@
           f'#define DM_GAME_PRESENT_DISPLAY {int(pi == "display")}',
           f'#define DM_GAME_CORE_PREEMPT {int(cp == "on")}',
           f'#define DM_GAME_ALLOC_BIG_ALIGN {int(aba == "on")}',
-@@ -257,7 +389,10 @@
+@@ -262,7 +394,10 @@
           f'#define DM_GAME_PRESENT_SNAP {int(ps == "on")}',
           f'#define DM_GAME_PSO_MTL4 {int(p4 == "on")}',
           f'#define DM_GAME_ENC_THREAD {int(et == "on")}',
@@ -187,7 +187,7 @@
           f'#define DM_GAME_PAD_LAYOUT {("simple", "full", "touch").index(pl)}',
           f'#define DM_GAME_OPMODE {int(om == "console")}',
           f'#define DM_GAME_PERF_BOOST {int(pm == "boost")}',
-@@ -270,19 +405,46 @@
+@@ -275,19 +410,46 @@
           f'#define DM_GAME_DRAW_BARRIERS_GAME {int(dbr == "game")}',
           f'#define DM_GAME_UPSCALER_KEYS {q(",".join(ups))}', f'#define DM_GAME_UPSCALER_N {len(ups)}',
           f'#define DM_GAME_VCONV_RANGE {int(vcr == "on")}',

@@ -1,6 +1,6 @@
 --- a/host/hle_cheats.c
 +++ b/host/hle_cheats.c
-@@ -1734,7 +1734,9 @@
+@@ -1686,7 +1686,9 @@
  #ifdef DM_GAME_DISPLAY_VERSIONS
      const struct { const char *build, *ver; } k[] = {DM_GAME_DISPLAY_VERSIONS};
      const char *bid = dm_main_build();

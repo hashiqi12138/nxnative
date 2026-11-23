@@ -1,0 +1,101 @@
+--- a/host/hle_album.c
++++ b/host/hle_album.c
+@@ -7,9 +7,7 @@
+ // and Resident Evil 4 / PRAGMATA (Switch 2: 5-arg SaveScreenshot with ImageOrientation).
+ // Offline/system-only album features (SaveCurrentScreenshot compositor capture, SaveAndShareScreenshot social upload, ShowAlbumFiles system applet) still return failure.
+ #include "hle.h"
+-#include <CoreFoundation/CoreFoundation.h>
+-#include <CoreGraphics/CoreGraphics.h>
+-#include <ImageIO/ImageIO.h>
++#include <zlib.h>
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <limits.h>
+@@ -106,23 +104,71 @@
+     return dst;
+ }
+ 
++// PNG, written here rather than through CoreGraphics/ImageIO.
++//
++// Those two frameworks are Apple's and do not exist on OHOS, where this port runs; the encoder is a few dozen lines
++// over zlib (already linked), so the album service works on both hosts instead of only building on one. The format is
++// the simplest valid one: signature, IHDR, one IDAT of filter-0 scanlines, IEND.
++static void album_put_be32(uint8_t *p, uint32_t v) {
++    p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v;
++}
++
++// One PNG chunk: length, type, data, CRC over type+data.
++static int album_png_chunk(FILE *f, const char *type, const uint8_t *data, size_t len) {
++    uint8_t hdr[8];
++    album_put_be32(hdr, (uint32_t)len);
++    memcpy(hdr + 4, type, 4);
++    if (fwrite(hdr, 1, 8, f) != 8) return 0;
++    if (len && fwrite(data, 1, len, f) != len) return 0;
++    uLong crc = crc32(0L, Z_NULL, 0);
++    crc = crc32(crc, (const Bytef *)type, 4);
++    if (len) crc = crc32(crc, (const Bytef *)data, (uInt)len);
++    uint8_t tail[4];
++    album_put_be32(tail, (uint32_t)crc);
++    return fwrite(tail, 1, 4, f) == 4;
++}
++
+ static int album_write_png(const char *path, const uint8_t *rgba, size_t w, size_t h) {
+-    CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+-    CGDataProviderRef prov = cs ? CGDataProviderCreateWithData(NULL, rgba, w * h * 4, NULL) : NULL;
+-    CGBitmapInfo bi = (CGBitmapInfo)kCGImageAlphaNoneSkipLast | (CGBitmapInfo)kCGBitmapByteOrderDefault;
+-    CGImageRef img = prov ? CGImageCreate(w, h, 8, 32, w * 4, cs, bi, prov, NULL, false, kCGRenderingIntentDefault) : NULL;
+-    CFURLRef url = img ? CFURLCreateFromFileSystemRepresentation(NULL, (const UInt8 *)path, (CFIndex)strlen(path), false) : NULL;
+-    CGImageDestinationRef dst = url ? CGImageDestinationCreateWithURL(url, CFSTR("public.png"), 1, NULL) : NULL;
+-    int ok = 0;
+-    if (dst) {
+-        CGImageDestinationAddImage(dst, img, NULL);
+-        ok = CGImageDestinationFinalize(dst) ? 1 : 0;
+-    }
+-    if (dst) CFRelease(dst);
+-    if (url) CFRelease(url);
+-    if (img) CGImageRelease(img);
+-    if (prov) CGDataProviderRelease(prov);
+-    if (cs) CGColorSpaceRelease(cs);
++    if (!path || !rgba || !w || !h || w > 0x7fffffffu || h > 0x7fffffffu) { errno = EINVAL; return 0; }
++    // scanlines: one filter byte (0 = none) then w RGBA pixels
++    size_t stride = w * 4;
++    if (stride / 4 != w) { errno = EOVERFLOW; return 0; }
++    size_t raw_len = (stride + 1) * h;
++    if (raw_len / (stride + 1) != h) { errno = EOVERFLOW; return 0; }
++    uint8_t *raw = malloc(raw_len);
++    if (!raw) { errno = ENOMEM; return 0; }
++    for (size_t y = 0; y < h; y++) {
++        uint8_t *row = raw + y * (stride + 1);
++        row[0] = 0;
++        memcpy(row + 1, rgba + y * stride, stride);
++    }
++    uLongf zlen = compressBound((uLong)raw_len);
++    uint8_t *z = malloc(zlen ? zlen : 1);
++    if (!z) { free(raw); errno = ENOMEM; return 0; }
++    int zr = compress2(z, &zlen, raw, (uLong)raw_len, 6);
++    free(raw);
++    if (zr != Z_OK) { free(z); errno = EIO; return 0; }
++
++    FILE *f = fopen(path, "wb");
++    if (!f) { int err = errno; free(z); errno = err; return 0; }
++    static const uint8_t sig[8] = { 0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a };
++    int ok = fwrite(sig, 1, 8, f) == 8;
++    if (ok) {
++        uint8_t ihdr[13];
++        album_put_be32(ihdr, (uint32_t)w);
++        album_put_be32(ihdr + 4, (uint32_t)h);
++        ihdr[8] = 8;    // bit depth
++        ihdr[9] = 6;    // colour type 6 = truecolour with alpha
++        ihdr[10] = 0;   // deflate
++        ihdr[11] = 0;   // adaptive filtering
++        ihdr[12] = 0;   // no interlace
++        ok = album_png_chunk(f, "IHDR", ihdr, sizeof ihdr);
++        if (ok) ok = album_png_chunk(f, "IDAT", z, (size_t)zlen);
++        if (ok) ok = album_png_chunk(f, "IEND", NULL, 0);
++    }
++    free(z);
++    if (fclose(f)) ok = 0;
++    if (!ok) errno = EIO;
+     return ok;
+ }
+ 

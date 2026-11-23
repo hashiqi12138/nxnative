@@ -1,6 +1,6 @@
 --- a/host/hle_lifecycle.c
 +++ b/host/hle_lifecycle.c
-@@ -4,10 +4,14 @@
+@@ -4,22 +4,52 @@
  // EXIT_DRAIN_MS), wait for the archive's write within DM_QUIT_ARCH_MS of the start, the same time a quit gives it, then the continuation (then: execve of the next program) or _exit(0).
  // The default action also exits in about 0.08 s (exit code 143); the value of this function is that order, exit code 0, the pipelines the run compiled kept, and the next program.
  #include "hle.h"
@@ -16,15 +16,45 @@
  void hlecount_flush(void); void dm_rec_finish(void);
  // The drain waits for the NVN calls under way. One that compiles its pipeline can take seconds (a draw waiting in pso_get → arch_capture → MTLCompiler: the stall a harness stops a
  // run for with SIGTERM), and before, the exit waited for it and ended at a 1.5 s fallback with nothing written: every SIGTERM run of Ocarina of Time without a window lost 400-500
-@@ -20,6 +24,7 @@
+ // pipelines, built again at the next start (PR #2625). The drain runs beside the rest now and is waited for EXIT_DRAIN_MS; the archive's write goes on either way
+ enum { EXIT_DRAIN_MS = 1500, EXIT_LATE_MS = 500 };
++static int ms_left(uint64_t t0, int budget_ms);
+ static _Atomic int g_exit_taken;   // the one path that ends the process: the exit itself, or the deadline if the exit is stuck
+ static void exit_end(void (*then)(void *), void *arg) {
+     if (atomic_exchange(&g_exit_taken, 1)) for (;;) pause();   // the other path is ending the process (then may be execve under way: one runs it)
+     if (then) then(arg);   // returns only if it failed (prog_exec logs why)
      _exit(0);
  }
++// The OHOS port's teardown: everything dm_host_shutdown does, and then it RETURNS instead of ending the process.
++//
++// Why this exists: on OHOS the guest runs on a thread napi_bridge.c created (front_ohos.c:46 `front_run` is just
++// `guest()`), so once the game is torn down that thread can end and the process can go on hosting the library. The
++// `_exit(0)` in exit_end is what made "exit the game" mean "exit the app" — nothing else required it.
++//
++// g_exit_taken is set so a SIGTERM arriving during the teardown does not run it twice; the deadline thread (OHOS has
++// one, see dm_host_shutdown_then) is NOT started here, because its whole job is to _exit when the teardown is stuck,
++// and returning is the point. A teardown that gets stuck therefore blocks its caller, which is the guest thread —
++// napi_bridge.c's stopGame runs it on a thread of its own for exactly that reason.
++static _Atomic int g_teardown_done;
++void dm_host_teardown(const char *why) {
++    if (atomic_exchange(&g_teardown_done, 1)) return;   // already done: a second call is a no-op, not a second teardown
++    uint64_t t0 = now_ns(); LOG("received %s: teardown (returning, the process stays up)", why);
++    atomic_store(&g_exit_taken, 1);   // a SIGTERM during the teardown must not start another one
++    hlecount_flush();                               // the save counter
++    dm_rec_finish();                                // the held state and the buffered steps (hle_hid.c)
++    dm_cheats_exit();                               // a clean exit: no safe mode for the cheats at the next launch
++    dm_audio_suspend(1);
++    dm_gfx_quit_begin();                            // no more prewarm compiles; what the pipeline archive holds starts writing now
++    dm_gfx_suspend(1);                              // drain the graphics pipeline (nvn_mtl.m); inline, so the caller waits for it
++    dm_gfx_quit(ms_left(t0, DM_QUIT_ARCH_MS));      // what the archive has not written yet, within the time a quit gives it
++    LOG("teardown done (%.3f s), the process stays up", (now_ns() - t0) / 1e9);
++}
  static int ms_left(uint64_t t0, int budget_ms) { int64_t left = budget_ms - (int64_t)((now_ns() - t0) / 1000000); return left > 0 ? (int)left : 0; }
 +#if defined(__APPLE__)
  void dm_host_shutdown_then(const char *why, void (*then)(void *), void *arg) {
      static _Atomic int once; if (atomic_exchange(&once, 1)) return;
      uint64_t t0 = now_ns(); LOG("received %s: graceful exit", why);
-@@ -39,11 +44,62 @@
+@@ -39,11 +69,62 @@
      LOG("graceful exit done (%.3f s)", (now_ns() - t0) / 1e9);
      exit_end(then, arg);
  }

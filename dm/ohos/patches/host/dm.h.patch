@@ -1,6 +1,6 @@
 --- a/host/dm.h
 +++ b/host/dm.h
-@@ -41,7 +41,29 @@
+@@ -43,8 +43,29 @@
  }
  #endif
  #define LOG(...) dm_log("[dm] " __VA_ARGS__)
@@ -10,7 +10,7 @@
 +#define LOG(...) dm_ohos_logv("[dm] " __VA_ARGS__)
 +#endif
  #define die(...) do { LOG("FATAL " __VA_ARGS__); abort(); } while (0)
-+
+ 
 +// Object-format differences for inline assembly and registration tables (ELF instead of Mach-O on OHOS).
 +// DM_ASM_SYM(name): a C symbol as assembly names it; DM_ASM_PAGE / DM_ASM_PAGEOFF: the adrp / add operands for its address; DM_ASM_PRIVATE: a global symbol
 +// kept inside the image. DM_SECTION(name): a registration table section, found again by getsectiondata (on ELF the linker bounds it with __start_ / __stop_ symbols)
@@ -27,10 +27,10 @@
 +#define DM_ASM_PRIVATE ".hidden"
 +#define DM_SECTION(s) section(s), retain
 +#endif
- 
- typedef struct { uint32_t st_name; uint8_t st_info, st_other; uint16_t st_shndx; uint64_t st_value, st_size; } Elf64_Sym;
- typedef struct { int64_t d_tag; union { uint64_t d_val, d_ptr; } d_un; } Elf64_Dyn;
-@@ -84,7 +106,11 @@
+ #define DM_SWITCH_ALIAS  UINT64_C(0x1000000000)   // a Switch's alias region: 64 GB
+ #define DM_SWITCH2_ALIAS UINT64_C(0x2000000000)   // a Switch 2's alias region on Mac: 128 GB (holds two 60 GB reservations, e.g. Xenoblade Chronicles 2 Switch 2 Edition)
+ // The alias region this run gets: on the Mac, at least the console's alias region (64 GB for Switch 1, 128 GB for Switch 2 when ounce is set);
+@@ -115,7 +136,11 @@
      uint64_t image_size, file_image_len, patch_len;   // only with the patch area before the base: whole image (with bss and key page), length of the image part of the file, patch area length
      uint64_t back_off, back_len;   // a second patch area after the image (patch_nso.py TWO: a text longer than a B reaches), inside size; 0 = none
      char build_id[33];         // First 16 bytes of the NSO build ID (hex); empty for older build outputs
@@ -42,7 +42,7 @@
      const Elf64_Dyn *dyn;
      const Elf64_Sym *symtab;
      const char *strtab;
-@@ -108,6 +134,15 @@
+@@ -139,6 +164,15 @@
  static inline const char *dm_main_build(void) { for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) return g_mod[i].build_id; return ""; }
  // Four thread-local slots: K18 = the Switch's x18, KTLS = tpidr_el0, KTLR = tpidrro_el0 (ThreadLocalRegion), KGATE = host gate entry; the actual key numbers are written into the key page by the loader
  extern pthread_key_t g_key18, g_keytls, g_keytlr, g_keygate;

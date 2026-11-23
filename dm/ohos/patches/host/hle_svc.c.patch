@@ -1,6 +1,6 @@
 --- a/host/hle_svc.c
 +++ b/host/hle_svc.c
-@@ -50,6 +50,8 @@
+@@ -51,6 +51,8 @@
  static _Atomic uint64_t g_alias_hw;   // how far into the alias region the game has mapped (its end's offset)
  // The address lies in the guest address block (every guest thread stack is here: the game's own heap or the stack region); the big-stack entry (hle_bigstack.c) uses it to decide whether to switch stacks
  int dm_guest_as_contains(uintptr_t a) { uintptr_t b = (uintptr_t)g_as; return g_as && a >= b && a - b < g_reserve; }
@@ -9,7 +9,7 @@
  
  // A size switch: bytes (decimal or 0x hex), or whole K / M / G (DM_GUEST_FILE_CHUNK=1G); 0 when unset. At least min, in whole units of align
  static size_t env_size(const char *name, size_t min, size_t align) {
-@@ -707,6 +709,7 @@
+@@ -716,6 +718,7 @@
      *base = lo; *size = remaining;
  }
  
@@ -17,7 +17,7 @@
  // Clip an unmapped interval to the regions on either side of the queried address.
  static void query_gap_bound(uint64_t addr, uint64_t start, uint64_t end, uint64_t *lo, uint64_t *hi) {
      if (end <= addr && end > *lo) *lo = end;
-@@ -732,6 +735,7 @@
+@@ -742,6 +745,7 @@
      *base = lo;
      *size = hi - lo;
  }
@@ -25,7 +25,7 @@
  
  // Diagnostic DM_ALIAS_WINDOWS=<window MB>: every 30 s, the mapped memory of each window of that size in the alias region (windows aligned to the size in absolute addresses, counted from the page
  // bitmap; windows with nothing mapped are left out). For sizing an allocator that reserves fixed, aligned windows and commits pages from each window's start: Unreal's FMallocBinned3 takes
-@@ -1034,6 +1038,17 @@
+@@ -1103,6 +1107,17 @@
                  base = mb + lo; size = hi - lo;
              }
          }
@@ -43,7 +43,7 @@
          else if (addr >= MACH_VM_MAX_ADDRESS) {
              // Horizon describes addresses past the process limit with a reserved block whose end wraps to zero.
              base = MACH_VM_MAX_ADDRESS; size = 0 - base; state = 0x10; perm = 0;
-@@ -1046,6 +1061,7 @@
+@@ -1115,6 +1130,7 @@
              if (addr < top && addr >= bottom) { base = bottom; size = ssz; state = 0xB/*Stack*/; perm = 3; }
              else { query_external_gap(addr, bottom, top, mm, &base, &size); state = 0/*Free*/; perm = 0; }
          }
