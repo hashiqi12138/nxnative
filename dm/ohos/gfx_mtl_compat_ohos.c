@@ -55,6 +55,32 @@ int mtl_link_tick(uint64_t n, double *target, double *lead_ms, int *ticks, doubl
     (void)n; if (target) *target = 0; if (lead_ms) *lead_ms = 0; if (ticks) *ticks = 0; if (gap_ms) *gap_ms = 0; return 0;
 }
 int mtl_link_wait_ticks(int ticks, uint64_t timeout_ns) { (void)ticks; (void)timeout_ns; return 1; }
+// The readiness check the acquire waits on upstream (vnv_mtl.m: a CVDisplayLink tick). OHOS has no display link - the
+// present mode paces the game (front_screen_max_fps returns 0 for that reason) - so every hold is already over and the
+// acquire never waits. Returning 1 is what "the link's tick has passed" means here.
+int mtl_link_ready_tick(int vsyncs) { (void)vsyncs; return 1; }
+int mtl_link_ready_ticks(int ticks) { (void)ticks; return 1; }
+// The present-queue readiness checks. Upstream they compare the presented frame counter with what the swapchain has
+// retired; here every present is synchronous on the Vulkan replay (mtl_present_wait above waits inline), so by the time
+// the caller asks, the frame it asks about is already on screen. 1 is "nothing to wait for".
+int mtl_present_screen_ready(void) { return 1; }
+int mtl_present_texture_ready(uint64_t ticket, uint64_t copy) { (void)ticket; (void)copy; return 1; }
+int mtl_snap_acquire_ready(void) { return 1; }   // snapshots are off (mtl_snap_on is 0), and upstream returns 1 then
+// The fine frame step only changes how a late frame of a 30 fps cap is shown on a 60 Hz link. The Vulkan replay's
+// present mode decides pacing, so there is nothing to switch.
+void mtl_set_fstep_fine(int on) { (void)on; }
+// Packaged-texture spares and the sparse-pool counter are Metal bookkeeping; the Vulkan replay holds neither.
+void mtl_spare_stats(uint64_t *held, uint64_t *trimmed, uint64_t *trimmed_mb) {
+    if (held) *held = 0; if (trimmed) *trimmed = 0; if (trimmed_mb) *trimmed_mb = 0;
+}
+void mtl_pkg_edge_stats(uint64_t *allocs, uint64_t *bytes, uint64_t *peak_bytes, uint64_t *fails, uint64_t *fail_bytes) {
+    if (allocs) *allocs = 0; if (bytes) *bytes = 0; if (peak_bytes) *peak_bytes = 0;
+    if (fails) *fails = 0; if (fail_bytes) *fail_bytes = 0;
+}
+void mtl_sparse_alias_delta(int delta) { (void)delta; }
+// hle_hid.c's "memtrim" console command asks the backend to give memory back. The Vulkan replay has no prewarm or
+// spare pool to trim, so there is nothing to release; the command stays accepted and does nothing.
+void dm_gfx_memtrim(void) { }
 
 // ---- textures / programs / samplers ----
 void mtl_set_samp_pool_n(int n) { (void)n; }

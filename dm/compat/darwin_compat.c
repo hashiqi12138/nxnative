@@ -98,6 +98,11 @@ kern_return_t mach_vm_remap(task_t target, mach_vm_address_t *addr, mach_vm_size
     kern_return_t r = vm_remap(target, &a, (vm_size_t)size, (vm_address_t)mask, flags, src_task, (vm_address_t)src, copy, cur, max, inherit);
     *addr = a; return r;
 }
+// The 64-bit names exist on the Mac as their own entry points; here they are the vm_* ones. hle_album.c and
+// hle_exl.c (upstream) call mach_vm_deallocate, so the compat layer has to answer it or those two do not build.
+kern_return_t mach_vm_deallocate(task_t task, mach_vm_address_t addr, mach_vm_size_t size) {
+    return vm_deallocate(task, (vm_address_t)addr, (vm_size_t)size);
+}
 
 // ---------------- thread and task information ----------------
 static clockid_t thread_cpu_clock(pid_t tid) { return (clockid_t)((~(unsigned)tid << 3) | 6); }   // the kernel's per-thread CPU clock (CPUCLOCK_SCHED of that thread)

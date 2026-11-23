@@ -58,6 +58,7 @@ kern_return_t vm_remap(task_t target, vm_address_t *addr, vm_size_t size, vm_add
 kern_return_t mach_vm_remap(task_t target, mach_vm_address_t *addr, mach_vm_size_t size, mach_vm_address_t mask, int flags, task_t src_task, mach_vm_address_t src,
                             boolean_t copy, vm_prot_t *cur, vm_prot_t *max, vm_inherit_t inherit);
 kern_return_t mach_vm_protect(task_t task, mach_vm_address_t addr, mach_vm_size_t size, boolean_t set_max, vm_prot_t prot);
+kern_return_t mach_vm_deallocate(task_t task, mach_vm_address_t addr, mach_vm_size_t size);
 
 // ---- vm_region: from /proc/self/maps ----
 #define VM_REGION_BASIC_INFO_64 9

@@ -46,6 +46,11 @@ void dm_ohos_front_surface_lost(void) {
 void front_run(void (*guest)(void)) { guest(); }   // the caller is already this module's own thread (napi_bridge.c)
 void *front_metal_layer(void) { return dm_front_window(); }
 int front_screen_max_fps(void) { return 0; }      // not known here; the present mode paces the game
+// The screen's native rate before front_screen_match lowered it (front_mac.m / front_ios.m). OHOS never matches the
+// screen - front_screen_match is a no-op here - so nothing was ever lowered and this is the same answer as
+// front_screen_max_fps. hle_nvn.c's 40 fps check reads it: 0 means "not known", and it then falls back to the
+// display's own rate (fps40_refused).
+int front_screen_capable_fps(void) { return front_screen_max_fps(); }
 void front_screen_match(int fps) { (void)fps; }
 int front_text_input(const char *title, const char *sub, const char *guide, const char *initial, int max_chars, char *out, int out_cap) {
     (void)title; (void)sub; (void)guide; (void)initial; (void)max_chars; (void)out; (void)out_cap;

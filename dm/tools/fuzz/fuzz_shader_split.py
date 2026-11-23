@@ -9,6 +9,7 @@ turns it into an 'unreadable' red line, but one that names no layout problem (te
 allocation gets past that net. Usage: see fuzzlib.py"""
 import struct
 import sys
+import zlib
 
 import fuzzlib
 
@@ -128,10 +129,33 @@ def nxsd():
     return bytes(d) + VS[0] + PS[0] + VS[1] + PS[1]
 
 
+def nxsh(magic, pair):
+    """Media.Vision NXVS / NXFS container: 0x40-byte header with control and code spans."""
+    ctl, code = pair
+    d = bytearray(0x40); d[:4] = magic
+    struct.pack_into('<6I', d, 4, 0x40 + len(ctl) + len(code), 0, 0x40, len(ctl), 0x40 + len(ctl), len(code))
+    return bytes(d) + ctl + code
+
+
+def vfs2():
+    """Cornfox & Bros. VFS2 archive: 'VFS2', directory table, file table (mode 2 zlib + mode 0 raw), optional name table."""
+    vs_raw, ps_raw = glslc([VS]), glslc([PS])
+    vs_z = struct.pack('<I', len(vs_raw)) + zlib.compress(vs_raw)
+    dirs = struct.pack('<IIiii', 0, 0, -1, 1, -1) + struct.pack('<IIiii', 1, 1, 0, -1, 0)
+    entries = (struct.pack('<6I', 1, 0, 2, 1, 0, len(vs_z))
+               + struct.pack('<6I', 2, 1, 0, 1, len(vs_z), len(ps_raw)))
+    data_start = 8 + len(dirs) + 4 + len(entries) + 4
+    payload = vs_z + ps_raw
+    names_off = data_start + len(payload)
+    def strtab(items): return struct.pack('<I', len(items)) + b''.join(struct.pack('<I', len(s)) + s for s in items)
+    return (ss.VFS2 + struct.pack('<I', 2) + dirs + struct.pack('<I', 2) + entries
+            + struct.pack('<I', names_off) + payload + strtab([b'a.vs', b'a.ps']) + strtab([b'', b'effects']))
+
+
 def seeds():
     b = bnsh()
     return {'bnsh': b, 'bahs': bahs(), 'mshd': mshd(), 'sarc-yaz0': yaz0(sarc([(b'shader.bnsh', b)])), 'glslc': glslc([VS]), 'glslc-program': glslc([VS, PS]),
-            'sdf': sdf(), 'arh1': arh1(), 'rgxd': rgxd(), 'nxsd': nxsd()}
+            'sdf': sdf(), 'arh1': arh1(), 'rgxd': rgxd(), 'nxsd': nxsd(), 'nxvs': nxsh(b'NXVS', VS), 'nxfs': nxsh(b'NXFS', PS), 'vfs2': vfs2()}
 
 
 def check(data):
