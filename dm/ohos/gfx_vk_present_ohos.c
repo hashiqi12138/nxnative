@@ -15,7 +15,7 @@
 
 extern pthread_mutex_t g_vk_queue_mu;   // gfx_vk_core.c: the one queue
 extern void dm_ohos_surface_size(int *, int *);   // front_ohos.c: the XComponent's surface size (OHOS has no ANativeWindow)
-void dm_perf_frame(double period); void dm_perf_frame_cost(int64_t replay_ns, int64_t gpu_ns);
+void dm_perf_frame(double period); void dm_perf_frame_cost(int64_t replay_ns, int64_t gpu_ns); void dm_perf_pin_replay(void);
 
 static VkSurfaceKHR g_surf; static VkSwapchainKHR g_swap;
 static VkExtent2D g_sext; static VkFormat g_sfmt;
@@ -552,6 +552,7 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4], uint64_t 
       static uint64_t last_exec; uint64_t ex = vk_replay_ns(), rp = ex - last_exec; last_exec = ex;
       double g = vk_gpu_ms_recent(); dm_perf_frame_cost((int64_t)rp, g > 0 ? (int64_t)(g * 1e6) : 0); }
     dm_perf_frame(period);
+    dm_perf_pin_replay();   // once: DM_PIN_REPLAY
     dm_gameperf_sample();   // throttled to 3 s inside; verifies the LTPO hint actually raised the GPU clock
     uint64_t n = ++g_presents;
     vkimg_t *im = vk_tex(t);

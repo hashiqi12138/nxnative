@@ -4,6 +4,8 @@
 #include "dm.h"
 #include <math.h>
 #include <sched.h>
+#include <dirent.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,18 +18,58 @@
 static int64_t perf_now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (int64_t)t.tv_sec * 1000000000ll + t.tv_nsec; }
 static int gettid_(void) { return (int)syscall(SYS_gettid); }
 
-// DM_PIN_REPLAY: the replay thread kept to the fastest cores (prime: the highest maximum clock; big: every core above the lowest).
+// DM_PIN_REPLAY: the cores the replay thread is kept to. Either listed ("0-3", "0,1,2,3") or by clock ("prime": the highest maximum
+// clock; "big": every core above the lowest). The clocks are read from cpufreq, which the P70 Pro+ does not let an app read
+// (Permission denied for every cpu*/cpufreq file, 2026-11-24), so there only a list works.
+// Returns 0 with the cores in `set` and listed in `l`, -1 when they cannot be known (already logged).
+int dm_perf_pin_cpus(const char *e, cpu_set_t *set, char *l, size_t ln) {
+    long n = sysconf(_SC_NPROCESSORS_CONF); if (n > 32) n = 32; size_t o = 0; CPU_ZERO(set); l[0] = 0;
+    if (!strcmp(e, "prime") || !strcmp(e, "big")) {
+        int prime = !strcmp(e, "prime"); long mhz[32] = {0}, hi = 0, lo = 0;
+        for (long c = 0; c < n; c++) { char p[96]; snprintf(p, sizeof p, "/sys/devices/system/cpu/cpu%ld/cpufreq/cpuinfo_max_freq", c); FILE *f = fopen(p, "r");
+            if (f) { if (fscanf(f, "%ld", &mhz[c]) != 1) mhz[c] = 0; fclose(f); } mhz[c] /= 1000; if (mhz[c] > hi) hi = mhz[c]; if (mhz[c] && (!lo || mhz[c] < lo)) lo = mhz[c]; }
+        if (!hi || hi == lo) { LOG("[perf] DM_PIN_REPLAY: the cores' clocks are unknown or all alike, not pinned"); return -1; }
+        for (long c = 0; c < n; c++) if (prime ? mhz[c] == hi : mhz[c] > lo) { CPU_SET(c, set); o += snprintf(l + o, ln - o, " %ld", c); }
+        return 0;
+    }
+    const char *p = e;   // a list: numbers and ranges, comma-separated
+    for (; *p;) {
+        char *q; long a = strtol(p, &q, 10), b = a; if (q == p) break;
+        if (*q == '-') b = strtol(q + 1, &q, 10);
+        if (a > b || b >= n || a < 0) break;
+        for (long c = a; c <= b; c++) { CPU_SET(c, set); o += snprintf(l + o, ln - o, " %ld", c); }
+        p = *q == ',' ? q + 1 : q;
+    }
+    if (*p || o == 0) { LOG("[perf] DM_PIN_REPLAY=%s does not name cores of this device (%ld CPUs): not pinned", e, n); return -1; }
+    return 0;
+}
+
+// On the replay thread itself.
 void dm_perf_replay_thread(void) {
     const char *e = getenv("DM_PIN_REPLAY"); if (!e || !*e || !strcmp(e, "0")) return;
-    int prime = !strcmp(e, "prime"); long n = sysconf(_SC_NPROCESSORS_CONF); if (n > 32) n = 32;
-    long mhz[32] = {0}, hi = 0, lo = 0;
-    for (long c = 0; c < n; c++) { char p[96]; snprintf(p, sizeof p, "/sys/devices/system/cpu/cpu%ld/cpufreq/cpuinfo_max_freq", c); FILE *f = fopen(p, "r");
-        if (f) { if (fscanf(f, "%ld", &mhz[c]) != 1) mhz[c] = 0; fclose(f); } mhz[c] /= 1000; if (mhz[c] > hi) hi = mhz[c]; if (mhz[c] && (!lo || mhz[c] < lo)) lo = mhz[c]; }
-    if (!hi || hi == lo) { LOG("[perf] DM_PIN_REPLAY: the cores' clocks are unknown or all alike, not pinned"); return; }
-    cpu_set_t set; CPU_ZERO(&set); char l[96]; size_t o = 0;
-    for (long c = 0; c < n; c++) if (prime ? mhz[c] == hi : mhz[c] > lo) { CPU_SET(c, &set); o += snprintf(l + o, sizeof l - o, " %ld", c); }
-    if (sched_setaffinity(0, sizeof set, &set)) { LOG("[perf] DM_PIN_REPLAY: sched_setaffinity refused"); return; }
-    LOG("[perf] replay thread on CPUs%s (%s, up to %ld MHz)", l, prime ? "prime" : "big", hi);
+    cpu_set_t set; char l[96]; if (dm_perf_pin_cpus(e, &set, l, sizeof l)) return;
+    if (sched_setaffinity(0, sizeof set, &set)) { LOG("[perf] DM_PIN_REPLAY: sched_setaffinity refused (%s)", strerror(errno)); return; }
+    LOG("[perf] replay thread on CPUs%s", l);
+}
+
+// For the NVN queue replay thread, which nothing of this platform layer runs on: it is found by its name once and pinned by
+// thread ID. On the P70 Pro+ (2026-11-24) the frame gains nothing from it: a loop pinned to each CPU in turn takes about 6.2 s
+// on cpu0-3 and 1.4 s on cpu4-11 (little cores first, then one fast cluster; the clocks themselves cannot be read), and unpinned
+// the thread, with its 92 ms of CPU a frame, already runs on cpu4-9. DM_PIN_REPLAY=0-3 there cost 165 ms a frame.
+#define REPLAY_COMM "NVN queue repla"   // comm is cut at 15 characters
+void dm_perf_pin_replay(void) {
+    static _Atomic int done; if (atomic_load(&done)) return; atomic_store(&done, 1);
+    const char *e = getenv("DM_PIN_REPLAY"); if (!e || !*e || !strcmp(e, "0")) return;
+    cpu_set_t set; char l[96]; if (dm_perf_pin_cpus(e, &set, l, sizeof l)) return;
+    DIR *d = opendir("/proc/self/task"); if (!d) { LOG("[perf] DM_PIN_REPLAY: /proc/self/task cannot be opened"); return; }
+    long tid = 0; char nm[64];
+    for (struct dirent *x; !tid && (x = readdir(d));) if (x->d_name[0] >= '0' && x->d_name[0] <= '9') { char p[96]; snprintf(p, sizeof p, "/proc/self/task/%s/comm", x->d_name);
+        FILE *f = fopen(p, "r"); if (!f) continue; int got = fgets(nm, sizeof nm, f) != NULL; fclose(f);
+        if (got) { for (char *s = nm; *s; s++) if (*s == '\n') *s = 0; if (!strcmp(nm, REPLAY_COMM)) tid = atol(x->d_name); } }
+    closedir(d);
+    if (!tid) { LOG("[perf] DM_PIN_REPLAY: no thread is named \"" REPLAY_COMM "\""); return; }
+    if (sched_setaffinity((pid_t)tid, sizeof set, &set)) { LOG("[perf] DM_PIN_REPLAY: sched_setaffinity refused for the replay thread (%s)", strerror(errno)); return; }
+    LOG("[perf] replay thread %ld on CPUs%s", tid, l);
 }
 
 // ---- adaptive frame rate: 60 → 40 → 30 fps when the frames do not fit the period the game asks for, and back when they fit with room.
