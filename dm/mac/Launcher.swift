@@ -1,8 +1,8 @@
 // Mac app launcher: the settings window shown before the game starts, in the launcher's own process (launcher.c calls dm_mac_launcher before it starts the host). Its settings come from the
 // app's Resources/dm/launcher.json (dm/games/settings.py with SETTINGS_PLATFORM=mac); the model and the rows are the iOS launcher's (dm/ios/Sources/LauncherSettings.swift, LauncherRow.swift),
-// and so is the store: launcher.<VAR> in the app's preferences, which launcher.c reads when the window is not shown (docs/frontends.md, Saved choices). Basic settings (level basic) come
+// and so is the store: launcher.<VAR> in the app's preferences, which LauncherModel reads on both windowed and no-window launches (docs/frontends.md, Saved choices). Basic settings (level basic) come
 // first, the others under Advanced settings, each in the list's sections. Play puts the settings into this process's environment, which the host inherits; Quit and closing the window end the
-// app without the game. "Show this window at launch" off: no window unless Option is held at launch, and launcher.c applies the saved choices. The window never takes focus by itself: an app
+// app without the game. "Show this window at launch" off: no window unless Option is held at launch, and LauncherModel applies the saved choices and launcher.json defaults without saving. The window never takes focus by itself: an app
 // opened in the background (open -g) keeps its window behind until the player switches to it
 import AppKit
 import AVFAudio
@@ -23,13 +23,17 @@ private func save_sync_report(_ save: UnsafePointer<CChar>, _ title: UnsafePoint
 enum SaveCheck {
     enum Outcome { case play(String?), retry, cancel }
 
+    /// The folder as launcher.c will pass it (cloud_saves_folder): DM_SAVE_SYNC from the launch environment or an env file, else the window's choice; "" or "0" = off.
+    static func effectiveFolder(defaults: UserDefaults = .standard) -> String {
+        getenv("DM_SAVE_SYNC").map { String(cString: $0) } ?? (defaults.string(forKey: "cloudSaves.folder") ?? "")
+    }
+
     /// Blocks while the cloud's file comes (SaveSyncReport.waitMs at most): call it off the main thread. nil: no report (sync is then left to the host as before)
-    static func report() -> SaveSyncReport? {
+    static func report(folder: String? = nil) -> SaveSyncReport? {
         // getenv, not ProcessInfo.environment: launcher.c sets DM_SAVE and applies the env files in this process before the window
         guard let save = getenv("DM_SAVE") else { fputs("launcher: save sync: no DM_SAVE\n", stderr); return nil }
         guard let id = info("DMTitleID"), !id.isEmpty else { fputs("launcher: save sync: no DMTitleID\n", stderr); return nil }
-        // the folder as launcher.c will pass it (cloud_saves_folder): DM_SAVE_SYNC from the launch environment or an env file, else the window's choice; "0" = off
-        let folder = getenv("DM_SAVE_SYNC").map { String(cString: $0) } ?? (UserDefaults.standard.string(forKey: "cloudSaves.folder") ?? "")
+        let folder = folder ?? effectiveFolder()
         var buf = [CChar](repeating: 0, count: 1024)
         let r = (folder.isEmpty ? "0" : folder).withCString { save_sync_report(save, id, $0, SaveSyncReport.waitMs, &buf, buf.count) }
         let line = String(cString: buf)
@@ -99,14 +103,16 @@ enum SaveCheck {
     }
 
     /// With the window off: the check and its question before the game, the app in front only while it asks. false: the player quit
-    static func withoutWindow() -> Bool {
+    static func withoutWindow(defaults: UserDefaults = .standard) -> Bool {
+        let folder = effectiveFolder(defaults: defaults)
+        guard SaveSyncReport.syncEnabled(folder) else { return true }
         final class Box: @unchecked Sendable { let lock = NSLock(); var report: SaveSyncReport?; var waiting = false }
         let app = NSApplication.shared
         defer { app.setActivationPolicy(.prohibited) }
         while true {
             let box = Box(), sem = DispatchSemaphore(value: 0)
             DispatchQueue.global(qos: .userInitiated).async {
-                let r = report()
+                let r = report(folder: folder)
                 box.lock.lock(); box.report = r; box.lock.unlock()
                 sem.signal()
                 DispatchQueue.main.async { if box.waiting { app.abortModal() } }   // runs inside the waiting alert's modal loop, if there is one
@@ -161,6 +167,7 @@ struct LauncherView: View {
                 settingSections(basic: true)
                 if m.values["DM_MIC"] == "1" { MicrophoneDevicePicker() }
                 CloudSavesSection()
+                PrewarmUploadSetting()
                 Section {
                     // a Button, not an empty DisclosureGroup: the sections below live outside it, and in a grouped Form a DisclosureGroup does not toggle on row/label clicks (and failed to open on macOS 27)
                     Button { advanced.toggle() } label: {
@@ -208,10 +215,12 @@ struct LauncherView: View {
 
     /// Play, once the cloud's save is compared with this Mac's: a save that changed on both sides is the player's pick, not the newer file's (SaveCheck)
     private func start() {
+        let folder = SaveCheck.effectiveFolder()
+        guard SaveSyncReport.syncEnabled(folder) else { done(true); return }
         check += 1; checking = true
         let mine = check
         DispatchQueue.global(qos: .userInitiated).async {
-            let r = SaveCheck.report()
+            let r = SaveCheck.report(folder: folder)
             DispatchQueue.main.async {
                 guard checking, check == mine else { return }   // the player played without it
                 checking = false
@@ -462,24 +471,54 @@ public func dmMacMicrophoneConsent() -> Int32 {
     return 0
 }
 
-// 1: Play (the window's settings are in the environment), 0: the player quit, 2: no window (no launcher.json, or "Show this window at launch" off): launcher.c applies the saved choices
+private var cachedLauncherSettings: [Setting]?
+private var loadedLauncherSettings = false
+
+private func launcherSettings() -> [Setting]? {
+    if loadedLauncherSettings { return cachedLauncherSettings }
+    loadedLauncherSettings = true
+    guard let url = Bundle.main.resourceURL?.appendingPathComponent("dm/launcher.json"),
+          let data = try? Data(contentsOf: url) else { return nil }
+    guard let file = try? JSONDecoder().decode(SettingsFile.self, from: data) else {
+        fputs("[RED] launcher: dm/launcher.json cannot be read; starting the game\n", stderr)
+        return nil
+    }
+    cachedLauncherSettings = file.settings
+    return file.settings
+}
+
+// Record which settings in dm/launcher.json are already set in the launch environment, before launcher.c reads env.txt.
+@_cdecl("dm_mac_record_launch_keys")
+public func dmMacRecordLaunchKeys() {
+    let settings = launcherSettings() ?? []
+    let keys = settings.map(\.env).filter { getenv($0) != nil }
+    setenv("DM_ENV_LAUNCH_KEYS", keys.joined(separator: " "), 1)
+}
+
+// 1: start the game (resolved settings from dm/launcher.json are in the environment), 0: the player quit.
+// showWindow == 0 (DM_LAUNCHER=0 or --no-launcher): resolve and apply saved choices + launcher.json defaults without initializing AppKit or SaveCheck.
 @_cdecl("dm_mac_launcher")
-public func dmMacLauncher() -> Int32 {
-    guard let url = Bundle.main.resourceURL?.appendingPathComponent("dm/launcher.json"), let data = try? Data(contentsOf: url) else { return 2 }
-    guard let file = try? JSONDecoder().decode(SettingsFile.self, from: data), !file.settings.isEmpty else { fputs("[RED] launcher: dm/launcher.json cannot be read; starting the game\n", stderr); return 2 }
+public func dmMacLauncher(_ showWindow: Int32) -> Int32 {
+    guard let settings = launcherSettings(), !settings.isEmpty else { return 1 }
+    if showWindow == 0 {
+        LauncherModel(settings).apply(persist: false)
+        return 1
+    }
     if (UserDefaults.standard.object(forKey: "window.show") as? Bool) == false && !NSEvent.modifierFlags.contains(.option) {
         fputs("launcher: settings window off (hold Option at launch to show it)\n", stderr)
-        return SaveCheck.withoutWindow() ? 2 : 0
+        guard SaveCheck.withoutWindow() else { return 0 }
+        LauncherModel(settings).apply(persist: false)
+        return 1
     }
-    let model = LauncherModel(file.settings)
+    let model = LauncherModel(settings)
     let app = NSApplication.shared, launcher = Launcher(model)
     app.setActivationPolicy(.regular)
     app.delegate = launcher
-    fputs("launcher: \(file.settings.count) settings shown\n", stderr)
+    fputs("launcher: \(settings.count) settings shown\n", stderr)
     app.run()
     CATransaction.flush()   // finish's order-out
     app.setActivationPolicy(.prohibited)   // the host is the game's app from here on
     guard launcher.play else { fputs("launcher: quit without starting the game\n", stderr); return 0 }
-    model.apply()
+    model.apply(persist: true)
     return 1
 }

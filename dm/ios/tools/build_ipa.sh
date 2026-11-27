@@ -90,6 +90,9 @@ else [ -n "$V" ] && lib_has "$MSL_IOS/b-$V" || die "no iOS shader libraries $MSL
   printf '%s\n' "$STAMP" | grep -qxF "$(printf 'game\t%s' "$GAME")" && printf '%s\n' "$STAMP" | grep -qxF "$(printf 'inputs\t%s' "$IN")" ||
     die "the iOS shader libraries $MSL_IOS/b-$V are not a full build from this profile's current tables (inputs $IN; their stamp: $([ -n "$STAMP" ] && printf '%s\n' "$STAMP" | grep -v '^#' | tr '\n\t' '  ' || echo none)): build them again (IOSOUT=$MSL_IOS dmsh_build.py ...)"
   head -1 "$GD/c1_full.tsv" 2> /dev/null | grep -Eq "^# chain b-$V inputs $IN( |$)" || die "$GD/c1_full.tsv is missing or not made from these libraries (chain $V, inputs $IN): a full dmsh_build.py run makes it and cb_extent.tsv"; fi
+if [ "$GFXAPI" = nvn ] && [ -s "$GD/gl_capture.tsv" ]; then
+  [ -f "$MSL_IOS/gl/gl_shaders.metallib" ] && [ -f "$MSL_IOS/gl/gl_shaders.tsv" ] || die "no supplemental GL shader library and table at $MSL_IOS/gl"
+fi
 }
 check_program
 P0=$GAME; P0_PATCHED=$PATCHED; P0_ROMFS=$ROMFS; P0_MSL=$MSL_IOS; P0_GFX=$GFXAPI
@@ -192,7 +195,8 @@ ICON=${DM_ICON:-$(dirname "$ROMFS")/icon.jpg}
 mkdir -p Gen/Assets.xcassets && printf '{"info":{"author":"xcode","version":1}}\n' > Gen/Assets.xcassets/Contents.json || die "asset catalog"
 if [ -f "$ICON" ]; then
   AI=Gen/Assets.xcassets/AppIcon.appiconset; mkdir -p "$AI" || die "mkdir $AI"
-  sips -s format png -z 1024 1024 "$ICON" --out "$AI/icon.png" > /dev/null || die "sips: cannot convert the icon $ICON"
+  # sips skips an empty file with a warning and exits 0 without writing the PNG; actool then builds the app without an icon and says nothing, so the PNG itself is checked
+  sips -s format png -z 1024 1024 "$ICON" --out "$AI/icon.png" > /dev/null && [ -s "$AI/icon.png" ] || die "the icon $ICON is not an image sips can read (empty, unreadable or not an image): give a JPEG or PNG"
   printf '{"images":[{"filename":"icon.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}\n' > "$AI/Contents.json"
   echo "DM_APPICON = AppIcon" >> Gen/dm.xcconfig
   t "app icon: $ICON"
@@ -209,12 +213,21 @@ fi
 # DM_COPY_ROMFS=NO also for the prepared project: its Copy game resources phase (stage_resources.sh) then leaves the game files out and writes the image's identity; Gen/dm.xcconfig is made again by every run
 [ "${DM_COPY_ROMFS:-YES}" != NO ] || [ "$PREPARE_XCODE" != YES ] || echo "DM_COPY_ROMFS = NO" >> Gen/dm.xcconfig
 xcodegen generate -q > /dev/null || die "xcodegen"
-# DMCommit / DMChain: the checkout that built the app (+dirty with uncommitted changes to tracked files) and the shader chain it carries, which the host logs at start (main.c)
+plutil -replace DMTitleID -string "$GAME" -- Gen/Info.plist || die "DMTitleID"
+PREWARM_URL=${DM_PREWARM_UPLOAD_URL-}
+if [ -z "${DM_PREWARM_UPLOAD_URL+x}" ] && [ -f "$DM/services/prewarm-inbox/endpoint.txt" ]; then
+  PREWARM_URL=$(<"$DM/services/prewarm-inbox/endpoint.txt")
+fi
+if [ "$GFXAPI" = nvn ] && [ -n "$PREWARM_URL" ]; then
+  plutil -replace DMPrewarmUploadURL -string "$PREWARM_URL" -- Gen/Info.plist || die "DMPrewarmUploadURL"
+fi
+# DMCommit / DMChain: the checkout that built the app (+dirty with uncommitted changes to tracked files) and the shader chain it carries, which the host logs at start (main.c).
+# plutil -replace inserts or overwrites (and sets the type), so a project.yml that already defines these keys does not abort the prepare.
 COMMIT=$(git -C "$DM" rev-parse --short=12 HEAD 2> /dev/null) && { [ -z "$(git -C "$DM" status --porcelain --untracked-files=no 2> /dev/null)" ] || COMMIT=$COMMIT+dirty
-  /usr/libexec/PlistBuddy -c "Add :DMCommit string $COMMIT" Gen/Info.plist > /dev/null || die "DMCommit"; t "source: $COMMIT"; }
-case "$MSLDIR" in b-*) /usr/libexec/PlistBuddy -c "Add :DMChain string ${MSLDIR#b-}" Gen/Info.plist > /dev/null || die "DMChain";; esac
+  plutil -replace DMCommit -string "$COMMIT" -- Gen/Info.plist || die "DMCommit"; t "source: $COMMIT"; }
+case "$MSLDIR" in b-*) plutil -replace DMChain -string "${MSLDIR#b-}" -- Gen/Info.plist || die "DMChain";; esac
 # DM_METAL_CAPTURE=1: a development build that may write GPU frame captures (MetalCaptureEnabled; the host's DM_GPU_CAPTURE switch writes them to Documents/gpu_captures)
-if [ "${DM_METAL_CAPTURE:-0}" = 1 ]; then /usr/libexec/PlistBuddy -c "Add :MetalCaptureEnabled bool true" Gen/Info.plist > /dev/null || die "MetalCaptureEnabled"; t "Metal frame capture: enabled (DM_METAL_CAPTURE=1)"; fi
+if [ "${DM_METAL_CAPTURE:-0}" = 1 ]; then plutil -replace MetalCaptureEnabled -bool true -- Gen/Info.plist || die "MetalCaptureEnabled"; t "Metal frame capture: enabled (DM_METAL_CAPTURE=1)"; fi
 RP=; if [ -n "${PROGRAMS_TSV:-}" ]; then   # a game of several programs: each program's files, which the Xcode build phase copies under p<index> as the IPA has them (stage_resources.sh)
   RP=Gen/resources_programs.tsv; printf '# program\tRomFS\tmarker\tiOS shaders\tshader folder (build_ipa.sh)\n' > "$RP"
   M0=$MSLDIR; while IFS= read -r row; do prog_set "$row"; printf '%s\t%s\t%s\t%s\t%s\n' "$PN" "$ROMFS" "$MARKER" "$(lib_path "$MSL_IOS/$MSLDIR")" "$MSLDIR" >> "$RP"; done < <(prog_rows); prog_back; MSLDIR=$M0; fi
@@ -265,6 +278,7 @@ if [ -n "${PROGRAMS_TSV:-}" ]; then   # each program's shader libraries, RomFS, 
   while IFS= read -r row; do prog_set "$row"; SKIP+=(--skip "$P/p$PN")
     if [ -f "$ROMFS" ]; then MAPS+=("$P/p$PN/romfs.img=$ROMFS"); else MAPS+=("$P/p$PN/romfs=$ROMFS"); fi
     MAPS+=("$P/msl/p$PN/$MSLDIR=$MSL_IOS/$MSLDIR")
+    if [ "$GFXAPI" = nvn ] && [ -s "$GD/gl_capture.tsv" ]; then MAPS+=("$P/msl/p$PN/gl=$MSL_IOS/gl"); fi
     if [ -d "$(dirname "$ROMFS")/html" ]; then MAPS+=("$P/p$PN/html=$(dirname "$ROMFS")/html"); fi
     if [ -d "$(dirname "$ROMFS")/jit" ]; then MAPS+=("$P/p$PN/jit=$(dirname "$ROMFS")/jit"); t "program $PN: nn::jit image $(dirname "$ROMFS")/jit"; fi   # beside its RomFS (loader.c dm_jit_serve_dir)
     if [ -d "$(dirname "$ROMFS")/romfs_programs" ]; then MAPS+=("$P/p$PN/romfs_programs=$(dirname "$ROMFS")/romfs_programs"); fi   # the other programs' RomFS (hle_fs.c MountRom by program index)
@@ -283,6 +297,7 @@ elif [ -f "$ROMFS" ]; then MAPS=("$P/romfs.img=$ROMFS"); else MAPS=("$P/romfs=$R
 if [ -n "$AOC" ] && [ -d "$AOC" ]; then MAPS+=("$P/aoc=$AOC"); t "add-on content: $(ls "$AOC" | tr '\n' ' ')"; fi
 if [ -n "${PSO:-}" ]; then MAPS+=("$P/pso=$PSO"); fi
 MAPS+=("$P/msl/$MSLDIR=$MSL_IOS/$MSLDIR" "$P=$APP")
+if [ "$GFXAPI" = nvn ] && [ -s "$GD/gl_capture.tsv" ]; then MAPS+=("$P/msl/gl=$MSL_IOS/gl"); fi
   if [ -d "$(dirname "$ROMFS")/html" ]; then MAPS+=("$P/html=$(dirname "$ROMFS")/html"); t "offline HTML pages: $(dirname "$ROMFS")/html"; fi   # beside its RomFS, where the host finds them (hle_web.c)
   if [ -d "$(dirname "$ROMFS")/jit" ]; then MAPS+=("$P/jit=$(dirname "$ROMFS")/jit"); t "nn::jit image: $(dirname "$ROMFS")/jit"; fi
   # the RomFS of the application's other programs (scripts/pack_nup.py: a Switch 2 Edition's Switch 1 program), which the game mounts by program index; in the app also with DM_COPY_ROMFS=NO (main.m)

@@ -12,29 +12,33 @@
 #include <stdlib.h>
 #include <string.h>
 
-// One row per model: its HID IDs, the report that carries its IMU, its minimum length, GameController's product category for it (the pairing key), and the decoder.
+// One row per model: its HID IDs, the report that carries its IMU, its minimum length, GameController's product category or vendorName for it (the pairing key),
+// whether to restrict matching to GamePad/Joystick interfaces, and the decoder.
 // Each model is paired on its own, so one pad of each model is paired even with another model connected
 typedef int (*pro_decoder)(pro_motion *, const uint8_t *, size_t, uint64_t, pro_motion_sample[3]);
-typedef struct { const char *name, *category; int vendor, product[2]; uint8_t report; size_t min_len; pro_decoder decode; } pro_model;
-enum { PRO_MODEL_PRO, PRO_MODEL_DS4, PRO_MODELS };
+typedef struct { const char *name, *category, *vendor_name; int vendor, product[2]; uint8_t report; size_t min_len; int gamepad_only; pro_decoder decode; } pro_model;
+enum { PRO_MODEL_PRO, PRO_MODEL_DS4, PRO_MODEL_8BITDO_U2W, PRO_MODELS };
 enum { PRO_STICK_TRIG = DM_STICK_MAX / 2 };              // half deflection in report 0x30 before suspecting a zero-only GameController stick
 #define PRO_STICK_HOLD_NS 150000000ull                   // sustained deflection while GameController (mapped and unmapped) stays zero before latching HID
 static const pro_model g_pro_models[PRO_MODELS] = {
-    {"Pro Controller", "Switch Pro Controller", 0x057E, {0x2009}, 0x30, 49, pro_motion_decode},
+    {"Pro Controller", "Switch Pro Controller", NULL, 0x057E, {0x2009}, 0x30, 49, 0, pro_motion_decode},
     // Over USB a DualShock 4 sends report 0x01, never 0x11, so its entry never counts: GameController's motion works there (issue #1770)
-    {"DualShock 4", "DualShock 4", 0x054C, {0x05C4, 0x09CC}, 0x11, 78, ds4_motion_decode},
+    {"DualShock 4", "DualShock 4", NULL, 0x054C, {0x05C4, 0x09CC}, 0x11, 78, 0, ds4_motion_decode},
+    // Bluetooth firmware 1.03+ streams 34-byte report 0x01 with IMU; firmware 1.02 sends 12-byte reports without sensors (issue #2997)
+    {"8BitDo Ultimate 2 Wireless", NULL, "8BitDo Ultimate 2 Wireless", 0x2DC8, {0x6012}, 0x01, 34, 1, abitdo_motion_decode},
 };
 static int pro_model_of(int vendor, int product) {
     for (int m = 0; m < PRO_MODELS; m++) for (int i = 0; i < 2; i++) if (vendor == g_pro_models[m].vendor && product && product == g_pro_models[m].product[i]) return m;
     return -1;
 }
-static int pro_model_of_category(const char *category) {   // GameController's controller of a model (front_mac.m)
-    for (int m = 0; m < PRO_MODELS; m++) if (category && !strcmp(category, g_pro_models[m].category)) return m;
+static int pro_model_of_controller(const char *category, const char *vendor_name) {   // GameController's controller of a model (front_mac.m)
+    for (int m = 0; m < PRO_MODELS; m++) if (g_pro_models[m].category && category && !strcmp(category, g_pro_models[m].category)) return m;
+    for (int m = 0; m < PRO_MODELS; m++) if (g_pro_models[m].vendor_name && vendor_name && !strcmp(vendor_name, g_pro_models[m].vendor_name)) return m;
     return -1;
 }
 
 typedef struct pro_device {
-    IOHIDDeviceRef hid; uint8_t report[512]; pro_motion motion; uint64_t heard; int model;
+    IOHIDDeviceRef hid; uint8_t report[512]; pro_motion motion; uint64_t heard; int model, short_logged;
     // Automatic per-stick fallback for Pro Controllers whose GameController stick stays zero (#2655):
     // stick_live: GameController (unmappedInput or extendedGamepad) was non-zero for this stick -> GC owns it;
     // stick_hid: latched onto report 0x30; stick_since: when continuous raw deflection >= PRO_STICK_TRIG began while GC stayed zero;
@@ -55,6 +59,7 @@ static void (*g_pro_stick_changed)(int player);              // front_mac.m: rer
 
 static int pro_sticks_fresh(const pro_device *d, uint64_t now) { return d && d->sticks.seen && now >= d->heard && now - d->heard < PRO_MOTION_STALE_NS; }
 static void pro_stick_reset(pro_device *d) {
+    memset(d->stick, 0, sizeof d->stick);
     memset(d->stick_live, 0, sizeof d->stick_live); memset(d->stick_hid, 0, sizeof d->stick_hid); memset(d->stick_since, 0, sizeof d->stick_since);
     memset(d->stick_sent, 0, sizeof d->stick_sent); d->stick_sent_mask = 0;
 }
@@ -97,24 +102,31 @@ static int dm_pro_sticks(int player, const int gc_nonzero[2], int32_t st[4]) {
     for (int a = 0; a < 4; a++) if (mask & (1 << (a / 2))) st[a] = d->stick[a];
     return mask;
 }
-// Evaluate per-stick fallback on each Pro report 0x30: latch a stick only after continuous deflection >= PRO_STICK_TRIG for PRO_STICK_HOLD_NS while both mapped and
-// unmapped GameController stay exact zero, and notify front_mac.m only when a latched stick's value or mask changes.
+// Evaluate per-stick fallback on each Pro report 0x30: track raw deflection until a stick stays >= PRO_STICK_TRIG for PRO_STICK_HOLD_NS, and query GameController
+// (including unmappedInput) only right before latching or while already latched—never on idle packets or once both sticks are known live (#2655, #3364).
+// Notify front_mac.m only when a latched stick's value or mask changes.
 static void pro_stick_update(pro_device *d, int player, uint64_t now) {
     if (!g_pro_gc_sticks) return;
-    int nz[2] = {0, 0};
-    if (!g_pro_gc_sticks(player, nz)) return;
+    int check_gc = d->stick_hid[0] || d->stick_hid[1];
+    int ready[2] = {0, 0};
     for (int s = 0; s < 2; s++) {
-        if (nz[s]) {
-            d->stick_live[s] = 1; d->stick_since[s] = 0;
-            if (d->stick_hid[s]) {
-                d->stick_hid[s] = 0;
-                LOG("[hid] Pro Controller %s stick: GameController active again; returning to GameController", s ? "right" : "left");
-            }
-        } else if (!d->stick_live[s] && !d->stick_hid[s]) {
-            int moved = abs(d->stick[2 * s]) >= PRO_STICK_TRIG || abs(d->stick[2 * s + 1]) >= PRO_STICK_TRIG;
-            if (!moved) d->stick_since[s] = 0;
-            else if (!d->stick_since[s]) d->stick_since[s] = now;
-            else if (now >= d->stick_since[s] && now - d->stick_since[s] >= PRO_STICK_HOLD_NS) {
+        if (d->stick_live[s] || d->stick_hid[s]) continue;
+        int moved = abs(d->stick[2 * s]) >= PRO_STICK_TRIG || abs(d->stick[2 * s + 1]) >= PRO_STICK_TRIG;
+        if (!moved) d->stick_since[s] = 0;
+        else if (!d->stick_since[s]) d->stick_since[s] = now;
+        else if (now >= d->stick_since[s] && now - d->stick_since[s] >= PRO_STICK_HOLD_NS) { ready[s] = 1; check_gc = 1; }
+    }
+    if (check_gc) {
+        int nz[2] = {0, 0};
+        if (!g_pro_gc_sticks(player, nz)) return;
+        for (int s = 0; s < 2; s++) {
+            if (nz[s]) {
+                d->stick_live[s] = 1; d->stick_since[s] = 0;
+                if (d->stick_hid[s]) {
+                    d->stick_hid[s] = 0;
+                    LOG("[hid] Pro Controller %s stick: GameController active again; returning to GameController", s ? "right" : "left");
+                }
+            } else if (ready[s] && !d->stick_live[s] && !d->stick_hid[s]) {
                 d->stick_hid[s] = 1;
                 LOG("[hid] Pro Controller %s stick: GameController reads zero while HID moves; reading from report 0x30 (DM_PRO_STICKS=0 keeps GameController)", s ? "right" : "left");
             }
@@ -181,9 +193,17 @@ static void dm_motion_pro_active(int active) {
 static void pro_report(void *ctx, IOReturn result, void *sender, IOHIDReportType type, uint32_t report_id, uint8_t *r, CFIndex len) {
     (void)sender;
     pro_device *d = ctx; const pro_model *m = &g_pro_models[d->model]; pro_pairing *g = &g_pro_pair[d->model];
-    if (result != kIOReturnSuccess || type != kIOHIDReportTypeInput || report_id != m->report || len < (CFIndex)m->min_len || r[0] != m->report) return;
+    if (result != kIOReturnSuccess || type != kIOHIDReportTypeInput || report_id != m->report || len < 1 || r[0] != m->report) return;
+    if (len < (CFIndex)m->min_len) {
+        if (d->model == PRO_MODEL_8BITDO_U2W && !d->short_logged) {
+            d->short_logged = 1;
+            LOG("[hid] %s raw motion: %ld-byte report 0x%02x has no sensor data (firmware before 1.03?)", m->name, (long)len, m->report);
+        }
+        return;
+    }
     uint64_t now = now_ns(); int was = pro_live(d->heard, now);
-    if (d->model == PRO_MODEL_PRO && g_pro_sticks) {
+    int want_sticks = d->model == PRO_MODEL_PRO && g_pro_sticks && !(d->stick_live[0] && d->stick_live[1]);
+    if (want_sticks) {
         if (!was) d->sticks = (pad_pro){0};
         uint64_t buttons;
         pad_pro_decode(&d->sticks, r, (size_t)len, &buttons, d->stick);
@@ -192,7 +212,7 @@ static void pro_report(void *ctx, IOReturn result, void *sender, IOHIDReportType
     // A continuous stream must also release another device that fell silent, including a preferred model holding the same merged player.
     if (!was && g_pro_changed) g_pro_changed(); else pro_route();
     if (!g_pro_active || d != g->bound) return;
-    if (d->model == PRO_MODEL_PRO && g_pro_sticks) pro_stick_update(d, g->player, now);
+    if (want_sticks && !(d->stick_live[0] && d->stick_live[1])) pro_stick_update(d, g->player, now);
     if (!g_pro_gyro) return;
     pro_motion_sample samples[3];
     int n = m->decode(&d->motion, r, (size_t)len, now, samples);
@@ -208,6 +228,10 @@ static void pro_found(void *ctx, IOReturn result, void *sender, IOHIDDeviceRef h
     if (result != kIOReturnSuccess || IOHIDDeviceGetProperty(hid, CFSTR(kIOHIDGCSyntheticDeviceKey)) == kCFBooleanTrue) return;
     for (pro_device *d = g_pro_devices; d; d = d->next) if (d->hid == hid) return;
     int model = pro_model_of(pro_property(hid, CFSTR(kIOHIDVendorIDKey)), pro_property(hid, CFSTR(kIOHIDProductIDKey))); if (model < 0) return;
+    if (g_pro_models[model].gamepad_only) {
+        int page = pro_property(hid, CFSTR(kIOHIDPrimaryUsagePageKey)), usage = pro_property(hid, CFSTR(kIOHIDPrimaryUsageKey));
+        if (page != kHIDPage_GenericDesktop || (usage != kHIDUsage_GD_Joystick && usage != kHIDUsage_GD_GamePad)) return;
+    }
     if (model != PRO_MODEL_PRO && !g_pro_gyro) return;
     pro_device *d = calloc(1, sizeof *d); if (!d) { LOG("[RED] %s raw HID: cannot allocate device state", g_pro_models[model].name); return; }
     d->model = model; d->hid = (IOHIDDeviceRef)CFRetain(hid); d->next = g_pro_devices; g_pro_devices = d;
@@ -235,8 +259,16 @@ static void dm_motion_pro_start(void (*changed)(void), int (*gc_sticks)(int, int
     NSMutableArray *match = [NSMutableArray array];
     for (int m = 0; m < PRO_MODELS; m++) {
         if (m != PRO_MODEL_PRO && !g_pro_gyro) continue;
-        for (int i = 0; i < 2; i++) if (g_pro_models[m].product[i])
-            [match addObject:@{@kIOHIDVendorIDKey: @(g_pro_models[m].vendor), @kIOHIDProductIDKey: @(g_pro_models[m].product[i])}];
+        for (int i = 0; i < 2; i++) if (g_pro_models[m].product[i]) {
+            if (g_pro_models[m].gamepad_only) {
+                [match addObject:@{@kIOHIDVendorIDKey: @(g_pro_models[m].vendor), @kIOHIDProductIDKey: @(g_pro_models[m].product[i]),
+                                   @kIOHIDDeviceUsagePageKey: @(kHIDPage_GenericDesktop), @kIOHIDDeviceUsageKey: @(kHIDUsage_GD_GamePad)}];
+                [match addObject:@{@kIOHIDVendorIDKey: @(g_pro_models[m].vendor), @kIOHIDProductIDKey: @(g_pro_models[m].product[i]),
+                                   @kIOHIDDeviceUsagePageKey: @(kHIDPage_GenericDesktop), @kIOHIDDeviceUsageKey: @(kHIDUsage_GD_Joystick)}];
+            } else {
+                [match addObject:@{@kIOHIDVendorIDKey: @(g_pro_models[m].vendor), @kIOHIDProductIDKey: @(g_pro_models[m].product[i])}];
+            }
+        }
     }
     IOHIDManagerSetDeviceMatchingMultiple(g_pro_manager, (__bridge CFArrayRef)match);
     IOHIDManagerRegisterDeviceMatchingCallback(g_pro_manager, pro_found, NULL);

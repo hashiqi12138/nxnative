@@ -9,7 +9,7 @@ Each game the port knows has a folder `dm/games/<id>/`, named after the base gam
 - **`shader_seen.tsv`** (optional): shader keys a game's Mac runs asked for. The NSP script's `--seen-shaders` builds a partial library of only those, and it stops for a profile without this table ([Building selected Mac shaders](../../docs/development.md#building-selected-mac-shaders)). No other tool reads it, and it is not a shader input.
 - **`bench.tsv`** (optional): benchmark routes for `scripts/bench.py` ([A benchmark on the Mac](../../docs/development.md#a-benchmark-on-the-mac)): a name, the scripted input (`DM_KEYS`), the measured window and a description, one route per line.
 - **`vk_capture.tsv`** (a Vulkan game that generates its shaders at run time, Super Mario Galaxy): the keys of the SPIR-V modules it generates.
-- **`gl_capture.tsv`** (an OpenGL game that puts its GLSL together at run time, Balatro): the files (`<key>.vert` / `<key>.frag`) of the shaders it compiles. A game whose renderer makes each shader only on first use (DOOM 3, id Tech 4's BFG renderer) has the capture run call the renderer's own finders for every render program (`dm/gfx/tools/idtech4_programs.py`).
+- **`gl_capture.tsv`** (a game that builds GLSL at run time, such as Balatro or Naruto Storm Connections): the files (`<key>.vert` / `<key>.frag`) of the shaders it compiles. For a game that presents through NVN, this table also requests the GL library beside the NVN libraries. A game whose renderer makes each shader only on first use (DOOM 3, id Tech 4's BFG renderer) has the capture run call the renderer's own finders for every render program (`dm/gfx/tools/idtech4_programs.py`).
 - **`bf_want.tsv`**.
 - **`validated.tsv`** (optional): the chain this game was last green on, written by `scripts/regress.py check --record` (or `baseline --record`) when its comparison status is `PASS` or `CHANGED` and every tested boot run succeeds. A boot failure shared with the baseline still prevents recording. `quick` / `full` rows (the latest of each), `mode<TAB>chain=<DMSH_CHAIN> commit=<short SHA>[+dirty] date=<UTC day> machine=<model> macos=<version>`; a red result leaves the rows as they were. A build using a derived profile does not validate the repository profile. `regress.py list` shows it and whether that chain is the current one. It holds no game data; commit it with the pull request.
 - **`geo_mesh.tsv`** (optional): vertex / geometry shader pairs drawn with a passthrough geometry shader, by hand, for pairs that neither `geo_pairs.tsv` (the split's shader variations) nor the prewarm list's `G` rows name: a game whose stages are separate programs (NieR:Automata); `dmsh_build.py` builds a mesh library for each pair of both (`dmsh_mesh.py`), and the host draws such a pair's triangle lists as mesh draws ([Passthrough geometry shaders drawn by the vertex shader](../../docs/reference/shaders.md#passthrough-geometry-shaders-drawn-by-the-vertex-shader)). A pair in neither takes the compute path, and the pipeline record names it as a `G` row.
@@ -48,15 +48,23 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | [13 Sentinels: Aegis Rim](01003FC01670C000/README.md) | `01003FC01670C000` | 1.10 | 11.4.3 | Vanillaware's engine | NVN | — |
 | [13 Sentinels: Aegis Rim, Asian release](01008D7016438000/README.md) | `01008D7016438000` | 1.00 (base) | 11.4.3 | Vanillaware's engine | NVN | — |
 | [13 Sentinels: Aegis Rim, Japanese release](010045C014650000/README.md) | `010045C014650000` | 1.00 (base) | 10.8.2 | Vanillaware's engine | NVN | — |
+| [A Little to the Left](0100354017668000/README.md) | `0100354017668000` | 3.6.0 | 13.3.7 | Unity 2020.3.26f1 IL2CPP, FMOD | NVN | 60 fps target |
 | [Absolum](0100A83022A22000/README.md) | `0100A83022A22000` | 1.1.2 | 18.3.2 | FNA / .NET NativeAOT (FNA3D's NVN driver) | NVN | — |
+| [Ace Angler: Fishing Spirits](01007C50132C8000/README.md) | `01007C50132C8000` | 1.2.3 (provisional Mac profile) | 13.3.5 | Unity 2021.2.17f1 IL2CPP, CRIWARE | NVN | — |
 | [Ace Attorney Investigations Collection](010005501E68C000/README.md) | `010005501E68C000` | 1.0.0.2 | 17.5.3 | Unity 2022.3.17f1 IL2CPP | NVN | — |
 | [Advance Wars 1+2: Re-Boot Camp](0100300012F2A000/README.md) | `0100300012F2A000` | 1.0.0 (base) | 10.4.1 | Unity 2020.2.1f3 IL2CPP | NVN | — |
 | [AI: THE SOMNIUM FILES](010089B00D09C000/README.md) | `010089B00D09C000` | 1.0.1 | 6.4.2 | Unity 2017.4.17f1 IL2CPP | NVN | — |
 | [ASTRAL CHAIN](01007300020FA000/README.md) | `01007300020FA000` | 1.0.1 | 6.4.0 | PlatinumGames' engine | NVN | 60 fps target |
 | [AI: THE SOMNIUM FILES - nirvanA Initiative](0100713016CCC000/README.md) | `0100713016CCC000` | 1.0.2 | 13.3.5 | Unity 2020.3.30f1 IL2CPP | NVN | — |
+| [Alien: Isolation](010075D00E8BA000/README.md) | `010075D00E8BA000` | 1.1.5_64113 | 8.2.0 | Creative Assembly's Cathode, Havok, Wwise | NVN | [60 fps target](010075D00E8BA000/README.md#frame-rate) |
 | [ANIMAL WELL](010020D01AD24000/README.md) | `010020D01AD24000` | 1.0.10 | 20.5.7 | its own (not named) | NVN | — |
 | [Animal Crossing: New Horizons](01006F8002326000/README.md) | `01006F8002326000` | 3.0.3 | 20.5.4 | Nintendo EPD (sead / agl / gsys) | NVN | — |
+| [Apollo Justice: Ace Attorney Trilogy](010020D01B890000/README.md) | `010020D01B890000` | 1.0.1 | 15.3.2 | Capcom's RE Engine, Havok, Wwise | NVN | [60 fps target](010020D01B890000/README.md#frame-rate) |
+| [Assassin's Creed III Remastered](01007F600B134000/README.md) | `01007F600B134000` | 1.0.0 (provisional Mac profile) | 5.4.0 | Ubisoft Scimitar / Anvil | NVN | — |
+| [Atelier Ryza 2: Lost Legends & the Secret Fairy](01009A9012022000/README.md) | `01009A9012022000` | 1.0.7 | 9.6.0 | Gust's engine on Koei Tecmo's KTGL | NVN | — |
+| [Atelier Ryza 3: Alchemist of the End & the Secret Key](010095E018944000/README.md) | `010095E018944000` | 1.6.0 | 14.3.0 | Gust's engine on Koei Tecmo's KTGL | NVN | [60 fps target](010095E018944000/README.md#frame-rate-and-memory) |
 | [Atelier Ryza: Ever Darkness & the Secret Hideout DX](0100199023B2E000/README.md) | `0100199023B2E000` | 1.2.0 | 18.3.2 | Gust's engine on Koei Tecmo's KTGL | NVN | — |
+| [Axiom Verge](0100052004384000/README.md) | `0100052004384000` | 1.0.3 | 4.4.0 | MonoGame (C# → C++ by BRUTE) | NVN | — |
 | [Baba Is You](01002CD00A51C000/README.md) | `01002CD00A51C000` | 1.0.12 | 19.3.3 | Multimedia Fusion 2 game on MP2 Games' runtime (Lua) | NVN | — |
 | [BALL x PIT](010086A022444000/README.md) | `010086A022444000` | 1.293 | 20.5.19 | Unity 6000.0.62f1 IL2CPP | NVN | — |
 | [Balatro](0100CD801CE5E000/README.md) | `0100CD801CE5E000` | 1.1.3 | 18.3.2 | LÖVE 11.4 (love-nx, LuaJIT, SDL) | OpenGL | — |
@@ -65,18 +73,24 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | [Bayonetta](010076F0049A2000/README.md) | `010076F0049A2000` | 1.1 | 3.6.0 | PlatinumGames' engine (Wii U form) | NVN | — |
 | [Bayonetta 2](01007960049A0000/README.md) | `01007960049A0000` | 1.2 | 3.6.0 | PlatinumGames' engine (Wii U form) | NVN | — |
 | [Bayonetta 3](01004A4010FEA000/README.md) | `01004A4010FEA000` | 1.2.0 | 13.3.2 | PlatinumGames' engine | NVN | — |
+| [Bayonetta Origins: Cereza and the Lost Demon](0100CF5010FEC000/README.md) | `0100CF5010FEC000` | 1.0.0 (base) | 13.3.2 | PlatinumGames' engine | NVN | — |
 | [The Binding of Isaac: Rebirth](01009BC00C38A000/README.md) | `01009BC00C38A000` | 1.0 (base) | 5.5.0 | its own engine | NVN | — |
 | [Big Brain Academy: Brain vs. Brain](0100620012D6E000/README.md) | `0100620012D6E000` | 1.2.0 | 11.4.3 | NintendoWare Bezel Engine 1.56 | NVN | — |
+| [BioShock Remastered](0100AD10102B2000/README.md) | `0100AD10102B2000` | 1.0.2 (provisional Mac profile) | 9.3.1 | Unreal Engine 3 (Blind Squirrel), Scaleform, Bink | NVN | — |
+| [BioShock 2 Remastered](01002620102C6000/README.md) | `01002620102C6000` | 1.0.2 (provisional Mac profile) | 9.3.1 | Unreal Engine 3 (Blind Squirrel), Scaleform, Bink | NVN | — |
 | [Blasphemous](0100698009C6E000/README.md) | `0100698009C6E000` | 1.0.8 | 8.3.1 | Unity 2017.4.28f1 IL2CPP, FMOD | NVN | — |
 | [Blasphemous 2](010040801A4C8000/README.md) | `010040801A4C8000` | 1.0.8 | 15.3.2 | Unity 2021.3.20f1 IL2CPP, FMOD | NVN | — |
 | [Bloodstained: Curse of the Moon](01004B800AF5A000/README.md) | `01004B800AF5A000` | 1.1.1 | 4.5.0 | Inti Creates' engine | NVN | — |
 | [Bloodstained: Curse of the Moon 2](01004680124E6000/README.md) | `01004680124E6000` | 1.3.2 | 10.6.0 | Inti Creates' engine | NVN | — |
 | [Bloodstained: Ritual of the Night](0100BF500207C000/README.md) | `0100BF500207C000` | 1.60 | 7.6.0 | Unreal Engine 4, CRIWARE | NVN | 60 fps target |
+| [Boomerang Fu](010081A00EE62000/README.md) | `010081A00EE62000` | 1.3.7 | 18.3.5 | Unity 2022.3.54f1 IL2CPP, FMOD | NVN | — |
 | [Borderlands: Game of the Year Edition](010064800F66A000/README.md) | `010064800F66A000` | 1.0.2 | 9.3.0 | Unreal Engine 3 (package version 595), FMOD | NVN | 60 fps target |
 | [Brain Memory Training Academy](0100F5D01DA3A000/README.md) | `0100F5D01DA3A000` | 1.0.0 (base) | 16.2.4 | Unity 2022.3.5f1 IL2CPP | NVN | — |
 | [BRAVELY DEFAULT Ⅱ](01006DC010326000/README.md) | `01006DC010326000` | 1.0.0 (base) | 10.4.0 | Unreal Engine 4.23, CRIWARE | NVN | [60 fps target](01006DC010326000/README.md#frame-rate) |
+| [Bridge Constructor Portal](010016E004796000/README.md) | `010016E004796000` | 1.1 | 8.3.2 | Unity 2019.1.14f1 IL2CPP, FMOD | NVN | — |
 | [Burnout Paradise Remastered](0100DBF01000A000/README.md) | `0100DBF01000A000` | 1.0.0 (base) | 9.3.0 | Criterion's engine | NVN | — |
 | [Captain Toad: Treasure Tracker](01009BF0072D4000/README.md) | `01009BF0072D4000` | 1.4.2 | 8.2.0 | Nintendo EPD Tokyo (`al` over sead / agl) | NVN | — |
+| [CAPTAIN TSUBASA 2: WORLD FIGHTERS](01009720213B0000/README.md) | `01009720213B0000` | 1.0.6 | 18.3.1 | Unreal Engine 5.5.4, Wwise, Bink 2 | NVN | — |
 | [Castlevania: Belmont's Curse](0100BA4026E94000/README.md) | `0100BA4026E94000` | 1.1.0 | 19.3.16 | Unity 2022.3.62f2 IL2CPP, FMOD | NVN | — |
 | [Catherine: Full Body](0100BF00112C0000/README.md) | `0100BF00112C0000` | 1.0.1a | 8.2.1 | Atlus GFD (CRI middleware) | NVN | [60 fps mode](0100BF00112C0000/README.md#frame-rate) |
 | [Celeste](01002B30028F6000/README.md) | `01002B30028F6000` | 1.4.1.1 | 15.3.2 | MonoGame (C# → C++ by BRUTE) | NVN | — |
@@ -88,6 +102,7 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | [DARK SOULS: REMASTERED](01004AB00A260000/README.md) | `01004AB00A260000` | 1.0.3 | 4.5.0 | FromSoftware's engine | NVN | [60 fps mode](01004AB00A260000/README.md#frame-rate) |
 | [DAVE THE DIVER](010097F018538000/README.md) | `010097F018538000` | 1.0.6.1267 | 20.5.29 | Unity 6000.0.52f1 IL2CPP, FMOD | NVN | — |
 | [Dead Cells](0100646009FBE000/README.md) | `0100646009FBE000` | 1.25.0 | 13.3.5 | Heaps / HashLink (HL/C) | NVN | — |
+| [Devil May Cry 3 Special Edition](01007B600D5BC000/README.md) | `01007B600D5BC000` | 1.0.1 | 8.2.0 | Capcom's DMC3 engine, FMOD | NVN | — |
 | [Diablo II: Resurrected](0100726014352000/README.md) | `0100726014352000` | 1.0.34.0 | 11.4.3 | Blizzard's D2R engine, FMOD | NVN | [60 fps mode](0100726014352000/README.md#what-it-needs) |
 | [Diablo III: Eternal Collection](01001B300B9BE000/README.md) | `01001B300B9BE000` | 2.7.7.92380 | 8.2.0 | Blizzard's engine, FMOD | NVN | — |
 | [Digimon Story Cyber Sleuth: Complete Edition](010014E00DB56000/README.md) | `010014E00DB56000` | 1.0.3 | 6.4.0 | Media.Vision MVGL | OpenGL | — |
@@ -99,6 +114,7 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | [Donkey Kong Country Returns HD](01009D901BC56000/README.md) | `01009D901BC56000` | 1.1.0 | 18.3.5 | Unity 6000.0.28f1 IL2CPP | NVN | — |
 | [Donkey Kong Country: Tropical Freeze](0100C1F0051B6000/README.md) | `0100C1F0051B6000` | 1.0.2 | 4.4.0 | Retro Studios' engine | NVN | — |
 | [DOOM 3](010029D00E740000/README.md) | `010029D00E740000` | 1.0.5 | 14.3.0 | id Tech 4 (BFG Edition renderer), FMOD | OpenGL | — |
+| [DRAGON BALL XENOVERSE 2 FOR NINTENDO SWITCH](010078D000F88000/README.md) | `010078D000F88000` | 1.26.01 | 10.4.1 | Dimps' engine, Havok, CRIWARE | NVN | — |
 | [DRAGON BALL: Sparking! ZERO](010035F022078000/README.md) | `010035F022078000` | 2.0.76 | 14.3.0 | Unreal Engine 5.1.1, CRIWARE | NVN | 60 fps target, [120 fps option](010035F022078000/README.md#frame-rate) |
 | [DRAGON BALL Z: KAKAROT + A NEW POWER AWAKENS SET](010051C0134F8000/README.md) | `010051C0134F8000` | 1.70 | 9.3.1 | Unreal Engine 4.24, CRIWARE | NVN | — |
 | [DRAGON QUEST BUILDERS 2](010042000A986000/README.md) | `010042000A986000` | 1.7.3d | 5.4.0 | Koei Tecmo's KTGL | NVN | — |
@@ -107,9 +123,12 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | [DRAGON QUEST VII Reimagined](0100A9D01C446000/README.md) | `0100A9D01C446000` | 1.2.0 | 19.3.1 | Unreal Engine 4.27 | NVN | 60 fps target |
 | [DRAGON QUEST XI S: Echoes of an Elusive Age – Definitive Edition](01006C300E9F0000/README.md) | `01006C300E9F0000` | 1.0.4 | 7.3.2 | Unreal Engine 4.18 | NVN | 60 fps target |
 | [EA SPORTS FC 27](0100C49025D3E000/README.md) | `0100C49025D3E000` | 1.8d.310c | 22.2.0 | Frostbite 2025.1.2 (its NVN renderer in an NRO) | NVN | 60 fps target |
+| [ENDER LILIES: Quietus of the Knights](0100CCF012E9A000/README.md) | `0100CCF012E9A000` | 1.1.5c | 10.4.0 | Unreal Engine 4.27, FMOD | NVN | — |
+| [ESP Ra.De. Ψ](0100F9600E746000/README.md) | `0100F9600E746000` | 1.4.1 | 7.4.0 | M2's engine (`m2engage`), emulating Cave's 1998 arcade board in NROs | NVN | — |
 | [Factorio](01004200189F4000/README.md) | `01004200189F4000` | 2.0.76 | 21.4.2 | Wube Software's engine, SDL | OpenGL | — |
 | [Farming Simulator 26: Nintendo Switch Edition](0100D440269E8000/README.md) | `0100D440269E8000` | 1.0.1.0 | 20.5.4 | GIANTS Engine | NVN | — |
 | [Fate/hollow ataraxia REMASTERED](010070E022546000/README.md) | `010070E022546000` | 1.0.2 | 16.2.6 | TYPE-MOON's Fuzz engine (`smash::fw`) | OpenGL | — |
+| [Fate/stay night REMASTERED](010023301E41C000/README.md) | `010023301E41C000` | 1.4.1 | 16.2.6 | TYPE-MOON's Fuzz engine (`smash::fw`) | OpenGL | — |
 | [FINAL FANTASY CRYSTAL CHRONICLES Remastered Edition](0100CE4010AAC000/README.md) | `0100CE4010AAC000` | 1.0.3 | 8.2.1 | Unity 2018.4.2f1 IL2CPP, FMOD | NVN | — |
 | [FINAL FANTASY RESONANCE](0100606026F12000/README.md) | `0100606026F12000` | 1.0.1 | 20.5.17 | Unreal Engine 5.6.1 | NVN | 60 fps target |
 | [FINAL FANTASY RESONANCE, Asian release](0100B8A026F14000/README.md) | `0100B8A026F14000` | 1.0.1 | 20.5.17 | Unreal Engine 5.6.1 | NVN | 60 fps target |
@@ -125,13 +144,16 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | [Fire Emblem Fortune's Weave](04007EF01F8AE000/README.md) | `04007EF01F8AE000` | v131072 (Switch 2) | 22.2.0 (Ounce) | Intelligent Systems' engine, NintendoWare | NVN2 | 60 fps target, [120 fps option](04007EF01F8AE000/README.md#frame-rate) |
 | [Fire Emblem: Three Houses](010055D009F78000/README.md) | `010055D009F78000` | 1.2.0 | 6.5.0 | Koei Tecmo's KTGL | NVN | [60 fps mode](010055D009F78000/README.md#frame-rate) |
 | [Ghost Trick: Phantom Detective](010029B018432000/README.md) | `010029B018432000` | 1.0.0 (base) | 13.3.0 | Capcom's RE Engine, Wwise | NVN | — |
+| [Guacamelee! 2](01007E100456C000/README.md) | `01007E100456C000` | 1.0.4 (provisional Mac profile) | 5.3.0 | DrinkBox Studios' engine, FMOD | NVN | — |
 | [Hades](0100535012974000/README.md) | `0100535012974000` | 1.0.38233 | 9.3.0 | Supergiant Games' engine (The Forge) | Vulkan | — |
 | [Hades II](0100A00019DE0000/README.md) | `0100A00019DE0000` | 1.0.141667 (and base game) | 20.5.15 (base game: 19.3.9) | Supergiant Games' engine | NVN | — |
-| [Hollow Knight](0100633007D48000/README.md) | `0100633007D48000` | 1.5.12620 | 20.5.21 | Unity 6000.0.61f1 IL2CPP, FMOD | NVN | — |
-| [Hollow Knight: Silksong](010013C00E930000/README.md) | `010013C00E930000` | 1.0.30000 | 20.5.8 | Unity 6000.0.50f1 IL2CPP | NVN | — |
+| [Hollow Knight](0100633007D48000/README.md) | `0100633007D48000` | 1.5.12620 | 20.5.21 | Unity 6000.0.61f1 IL2CPP, FMOD | NVN | 60 fps target, [120 fps option](0100633007D48000/README.md#frame-rate) |
+| [Hollow Knight: Silksong](010013C00E930000/README.md) | `010013C00E930000` | 1.0.30000 | 20.5.8 | Unity 6000.0.50f1 IL2CPP | NVN | 60 fps target, [120 fps option](010013C00E930000/README.md#frame-rate) |
 | [Hyrule Warriors: Age of Calamity](01002B00111A2000/README.md) | `01002B00111A2000` | 1.3.0 | 9.6.0 | Koei Tecmo's KTGL | NVN | 60 fps target |
 | [Hyrule Warriors: Age of Imprisonment](04003F40232DE000/README.md) | `04003F40232DE000` | v196608 (Switch 2) | 20.5.15 (Ounce) | Koei Tecmo's KTGL | NVN2 | — |
 | [Hyrule Warriors: Definitive Edition](0100AE00096EA000/README.md) | `0100AE00096EA000` | 1.0.1 | 3.5.1 | Koei Tecmo's KTGL | NVN | — |
+| [Iconoclasts](0100BC60099FE000/README.md) | `0100BC60099FE000` | 1.15p | 5.3.0 | its own engine | NVN | — |
+| [It Takes Two](010092A0172E4000/README.md) | `010092A0172E4000` | 1.0.3 | 13.3.5 | Unreal Engine 4 (Hazelight, AngelScript), Wwise | NVN | 60 fps target |
 | [Kirby Air Riders](040077201BE50000/README.md) | `040077201BE50000` | v458752 (Switch 2) | 20.5.26 (Ounce) | Its own engine (`phx`, `Aurora`) | NVN2 | — |
 | [Kirby and the Forgotten Land](01004D300C5AE000/README.md) | `01004D300C5AE000` | 1.1.0 | 11.4.0 | HAL Laboratory's engine (NintendoWare) | NVN | — |
 | [Kirby's Dream Buffet](0100A8E016236000/README.md) | `0100A8E016236000` | 1.0.0 | 13.3.0 | HAL Laboratory's engine (Basil, NintendoWare) | NVN | — |
@@ -158,6 +180,9 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | [Minecraft for Nintendo Switch](0100D71004694000/README.md) | `0100D71004694000` | 1.26.62 | 20.5.14 | RenderDragon, FMOD | Vulkan | — |
 | [Monster Hunter Rise](0100B04011742000/README.md) | `0100B04011742000` | 16.0.2 | 11.4.3 | Capcom's RE Engine | NVN | 60 fps target |
 | [Monster Train 2](010051701FB46000/README.md) | `010051701FB46000` | 1.1.1 | 18.3.5 | Unity 2022.3.54f1 IL2CPP | NVN | [60 fps mode](010051701FB46000/README.md#frame-rate) |
+| [Mortal Kombat 11](0100F2200C984000/README.md) | `0100F2200C984000` | 1.0.26 | 9.3.1 | NetherRealm's Unreal Engine 3, Wwise, Havok | NVN | — |
+| [NARUTO SHIPPUDEN: Ultimate Ninja STORM 3 Full Burst](01006BB00800A000/README.md) | `01006BB00800A000` | 1.0.1 | 4.4.0 | CyberConnect2, CRIWARE | NVN | [60 fps in Mac VS Battle](01006BB00800A000/README.md#frame-rate) |
+| [NARUTO X BORUTO Ultimate Ninja STORM CONNECTIONS](0100D2D0190A4000/README.md) | `0100D2D0190A4000` | 1.7.1 | 14.3.0 | CyberConnect2, CRIWARE | NVN + OpenGL ES | [60 fps target](0100D2D0190A4000/README.md#frame-rate) |
 | [Need for Speed: Hot Pursuit Remastered](010029B0118E8000/README.md) | `010029B0118E8000` | 1.0.3 | 10.4.1 | Criterion's engine (Stellar Entertainment port) | NVN | 60 fps target |
 | [NieR:Automata The End of YoRHa Edition](010056B015FE8000/README.md) | `010056B015FE8000` | 1.0.3 | 12.3.9 | PlatinumGames' engine | NVN | 60 fps target |
 | [NieR:Automata The End of YoRHa Edition, Asian release](0100B8E016F76000/README.md) | `0100B8E016F76000` | 1.0.3 | 12.3.9 | PlatinumGames' engine | NVN | 60 fps target |
@@ -172,10 +197,12 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | [Orbitals](040032B023CA4000/README.md) | `040032B023CA4000` | 1.1.2.0 (Switch 2) | 21.4.2 (Ounce) | Unreal Engine 5.6.1, Wwise, Bink 2 | NVN2 | — |
 | [Ori and the Blind Forest: Definitive Edition](010061D00DB74000/README.md) | `010061D00DB74000` | 1.0.2 | 8.2.0 | Unity 2018.4.1f1 IL2CPP, FMOD | NVN | — |
 | [Ori and the Will of the Wisps](01008DD013200000/README.md) | `01008DD013200000` | 1.2.1 | 9.4.0 | Unity 2018.4.24f1 IL2CPP, Wwise | NVN | — |
+| [Outer Wilds](01003DC0144B6000/README.md) | `01003DC0144B6000` | 1.1.15.1027 | 14.3.0 | Unity 2019.4.40f1 IL2CPP, FMOD | NVN | [60 fps target](01003DC0144B6000/README.md#frame-rate) |
 | [Overcooked! All You Can Eat](0100F28011892000/README.md) | `0100F28011892000` | 1.0.12 | 10.4.1 | Unity 2019.4.11f1 IL2CPP, FMOD | NVN | 60 fps target |
 | [Paper Mario: The Origami King](0100A3900C3E2000/README.md) | `0100A3900C3E2000` | 1.0.1 | 8.3.1 | Intelligent Systems' engine on NintendoWare | NVN | — |
 | [Paper Mario: The Thousand-Year Door](0100ECD018EBE000/README.md) | `0100ECD018EBE000` | 1.0.1 | 15.3.2 | Intelligent Systems' engine on NintendoWare | NVN | 60 fps target |
 | [Patrick's Parabox](0100E44016C22000/README.md) | `0100E44016C22000` | 1.0.1 | 13.3.7 | Unity 2020.3.30f1 IL2CPP | NVN | — |
+| [Pentiment](010036F01AE9E000/README.md) | `010036F01AE9E000` | 1.3.2 | 16.2.0 | Unity 2021.3.23f1 IL2CPP, FMOD | NVN | — |
 | [Persona 4 Golden](010062B01525C000/README.md) | `010062B01525C000` | 1.0.2 | 14.3.0 | Atlus in-house (CRI middleware) | NVN | — |
 | [Persona 5 Royal](01005CA01580E000/README.md) | `01005CA01580E000` | 1.0.2 | 13.3.2 | Atlus GFD / Needle (CRI middleware) | NVN | — |
 | [Persona 5 Strikers](0100801011C3E000/README.md) | `0100801011C3E000` | 1.0.0 (base) | 8.3.2 | Koei Tecmo's KTGL | NVN | [60 fps mode](0100801011C3E000/README.md#frame-rate) |
@@ -184,9 +211,12 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | [Pokémon Brilliant Diamond](0100000011D90000/README.md) | `0100000011D90000` | 1.3.0 | 11.4.3 | Unity 2019.4.27f1 IL2CPP | NVN | 60 fps target |
 | [Pokémon Legends: Arceus](01001F5010DFA000/README.md) | `01001F5010DFA000` | 1.1.1 | 11.4.0 | Game Freak's engine (between Sword's and Trinity) | NVN | — |
 | [Pokémon Legends: Z-A](0100F43008C44000/README.md) | `0100F43008C44000` | 2.0.2 | 19.3.11 | Game Freak's Trinity engine | NVN | — |
+| [Pokémon: Let's Go, Eevee!](0100187003A36000/README.md) | `0100187003A36000` | 1.0.2 | 5.4.151 | Game Freak's engine | NVN | [60 fps target on matching builds](0100187003A36000/README.md#frame-rate) |
+| [Pokémon: Let's Go, Pikachu!](010003F003A34000/README.md) | `010003F003A34000` | 1.0.2 (provisional Mac profile) | 5.4.151 | Game Freak's engine | NVN | [60 fps target on matching builds](010003F003A34000/README.md#frame-rate) |
 | [Pokémon Pokopia](0400A3A01EE4C000/README.md) | `0400A3A01EE4C000` | v655360 (Switch 2) | 20.5.25 (Ounce) | Koei Tecmo's KTGL | NVN2 | — |
 | [Pokémon Scarlet](0100A3D008C5C000/README.md) | `0100A3D008C5C000` | 1.0.0 | 13.3.5 | Game Freak's Trinity engine | NVN | — |
 | [Pokémon Shield](01008DB008C2C000/README.md) | `01008DB008C2C000` | 1.3.2 | 7.3.2 | Game Freak's engine (before Trinity) | NVN | — |
+| [Pokémon Shining Pearl](010018E011D92000/README.md) | `010018E011D92000` | 1.3.0 | 11.4.3 | Unity 2019.4.27f1 IL2CPP | NVN | [60 fps target](010018E011D92000/README.md#frame-rate) |
 | [Pokémon Sword](0100ABF008968000/README.md) | `0100ABF008968000` | 1.3.2 | 7.3.2 | Game Freak's engine (before Trinity) | NVN | — |
 | [Pokémon Violet](01008F6008C5E000/README.md) | `01008F6008C5E000` | 1.0.0 | 13.3.5 | Game Freak's Trinity engine | NVN | — |
 | [Portal](01007BB017812000/README.md) | `01007BB017812000` | 1.0.3 | 13.3.0 | Valve's Source engine (28 NROs) | NVN | — |
@@ -199,11 +229,13 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | [Red Dead Redemption](01007820196A6000/README.md) | `01007820196A6000` | 1.0.7 | 15.3.2 | Rockstar's RAGE (Double Eleven port) | NVN | 60 fps target |
 | [Resident Evil](010050F00BC1A000/README.md) | `010050F00BC1A000` | 1.0.0 (base) | 5.4.0 | Capcom's MT Framework | NVN | — |
 | [Resident Evil 4](0400569027BF4000/README.md) | `0400569027BF4000` | v131072 (Switch 2) | 21.4.3 (Ounce) | RE Engine, Havok, Wwise | NVN2 | — |
+| [Réussir : Code de la route](0100EA300DE6E000/README.md) | `0100EA300DE6E000` | 1.0.1 | 7.3.2 | Unity 2018.3.9f1 IL2CPP, FMOD | NVN | — |
 | [Return of the Obra Dinn](010032E00E6E2000/README.md) | `010032E00E6E2000` | 1.0.1 | 8.2.0 | Unity 2017.4.28f1 IL2CPP | NVN | — |
 | [Rhythm Heaven Groove](0100D9F01D474000/README.md) | `0100D9F01D474000` | 1.0.0 (base) | 21.4.0 | Nintendo's own 2D engine | NVN | — |
 | [ROMANCE OF THE THREE KINGDOMS 8 REMAKE](0100C2A01A730000/README.md) | `0100C2A01A730000` | 1.1.3 | 17.5.3 | Koei Tecmo's KTGL | NVN | — |
 | [ROMANCE OF THE THREE KINGDOMS XIV: Diplomacy and Strategy Expansion Pack](0100ED7012DB2000/README.md) | `0100ED7012DB2000` | 1.0.10 | 10.4.1 | Koei Tecmo's KTGL | NVN | — |
 | [Sam & Max: The Devil's Playhouse](0100D5501857E000/README.md) | `0100D5501857E000` | 1.8.0 (provisional Mac profile) | 17.5.6 | Telltale Tool, FMOD | NVN | — |
+| [SD GUNDAM G GENERATION CROSS RAYS](010055700CEA8000/README.md) | `010055700CEA8000` | 1.6.3 | 9.4.1 | TOM CREATE's engine on CRIWARE | NVN | — |
 | [Sea of Stars](01008C0016544000/README.md) | `01008C0016544000` | 2.0.59001 | 16.2.0 | Unity 2021.3.25f1 IL2CPP | NVN | — |
 | [SHIN MEGAMI TENSEI V: Vengeance](010069C01AB82000/README.md) | `010069C01AB82000` | 1.0.3 | 15.3.2 | Unreal Engine 4.27 | NVN | 60 fps target |
 | [Sid Meier's Civilization VI](010044500C182000/README.md) | `010044500C182000` | 1.2.19 | 8.2.1 | Firaxis, Havok, Wwise | NVN | — |
@@ -215,11 +247,14 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | [South Park: The Fractured But Whole](01008F2005154000/README.md) | `01008F2005154000` | 1.05 | 3.5.1 | Ubisoft Snowdrop | NVN | 60 fps target |
 | [South Park: The Stick of Truth](010095300B6A4000/README.md) | `010095300B6A4000` | 1.01 | 4.5.0 | Obsidian's Onyx engine, Bink | NVN | [60 fps mode](010095300B6A4000/README.md#frame-rate) |
 | [STEINS;GATE RE:BOOT](01008BC024FDE000/README.md) | `01008BC024FDE000` | 1.0.3 | 20.5.17 | M2's ADV engine | NVN | — |
+| [Star Ocean: The Second Story R](010065301A2E0000/README.md) | `010065301A2E0000` | 1.1.0 | 15.3.2 | Unity 2021.3.22f1 IL2CPP, CRIWARE, FMOD | NVN | — |
 | [Stardew Valley](0100E65002BB8000/README.md) | `0100E65002BB8000` | 1.6.15.13 | 20.5.27 | MonoGame (C# → C++ by BRUTE) | NVN | — |
 | [SteamWorld Dig](01009320084A4000/README.md) | `01009320084A4000` | 1.12.0 | 3.4.0 | Image & Form's own engine (SteamWorld) | NVN | — |
 | [SteamWorld Dig 2](0100CA9002322000/README.md) | `0100CA9002322000` | 4.1.1 | 3.4.0 | Image & Form's own engine (SteamWorld) | NVN | — |
 | [SteamWorld Heist II](010089C01E9CA000/README.md) | `010089C01E9CA000` | 1.5.1 | 17.5.6 | Thunderful's own engine (SteamWorld) | NVN | — |
 | [SteamWorld Heist: Ultimate Edition](010016100A186000/README.md) | `010016100A186000` | 2.2.1 | 4.5.0 | Image & Form's own engine (SteamWorld) | NVN | — |
+| [stitch.](010025801CEA8000/README.md) | `010025801CEA8000` | 1.2 | 21.4.4 | Unity 6000.0.68f1 IL2CPP, FMOD | NVN | [60 fps target](010025801CEA8000/README.md#frame-rate) |
+| [STORY OF SEASONS: Friends of Mineral Town](0100ED400EEC2000/README.md) | `0100ED400EEC2000` | 1.0.5 | 8.2.0 | — | NVN | — |
 | [Streets of Rage 4](0100EC9010258000/README.md) | `0100EC9010258000` | 1.0.9 | 9.3.1 | MonoGame (C# → C++ by BRUTE) | NVN | — |
 | [Subnautica](0100429011144000/README.md) | `0100429011144000` | 1.23.83358 | 13.3.5 | Unity 2019.4.36f1 IL2CPP, FMOD | NVN | — |
 | [Subnautica: Below Zero](010014C011146000/README.md) | `010014C011146000` | 1.23.55063 | 13.3.5 | Unity 2019.4.36f1 IL2CPP, FMOD | NVN | — |
@@ -258,12 +293,17 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | [Unicorn Overlord](010069401ADB8000/README.md) | `010069401ADB8000` | 1.05 | 16.2.4 | Vanillaware's engine | NVN | — |
 | [Unicorn Overlord, Asian release](010054B01AD92000/README.md) | `010054B01AD92000` | 1.05 | 16.2.4 | Vanillaware's engine | NVN | — |
 | [UnMetal](01008F4014A74000/README.md) | `01008F4014A74000` | 1.2.0 | 14.3.0 | Unepic Fran's own engine (`arcadix`) | OpenGL | — |
+| [Volcano Princess](01007CB025C58000/README.md) | `01007CB025C58000` | 1.0.2 | 21.4.7 | Unity 6000.4.7f1 IL2CPP, FMOD | NVN | — |
 | [Warhammer Survivors](0100CAA026246000/README.md) | `0100CAA026246000` | 1.0.0 (base) | 21.4.7 | Unity 6000.0.74f1 IL2CPP, FMOD | NVN | — |
 | [Well Dweller](0100217023F6C000/README.md) | `0100217023F6C000` | 1.0.0 | 22.2.0 | GameMaker Studio 2 (its runner) | OpenGL | — |
+| [XCOM 2 Collection](0100D0B00FB74000/README.md) | `0100D0B00FB74000` | 1.0.3 (`v131072`) | 9.3.1 | Unreal Engine 3, Wwise | NVN | Mac |
 | [Xenoblade Chronicles: Definitive Edition](0100FF500E34A000/README.md) | `0100FF500E34A000` | 1.1.2 | 9.3.1 | Monolith's engine | NVN | — |
+| [Xenoblade Chronicles: Definitive Edition – Nintendo Switch 2 Edition](0400FF500E34A001/README.md) | `0400FF500E34A001` | 2.0.0 (Switch 2) | 21.4.4 (Ounce) | Monolith's engine | NVN2 | — |
 | [Xenoblade Chronicles 2](0100E95004038000/README.md) | `0100E95004038000` | 2.1.0 | 3.5.0 | Monolith's engine | NVN | — |
+| [Xenoblade Chronicles 2 – Nintendo Switch 2 Edition](0400E95004038001/README.md) | `0400E95004038001` | 3.0.1 (Switch 2) | 21.4.4 (Ounce) | Monolith's engine | NVN2 | — |
 | [Xenoblade Chronicles 3](010074F013262000/README.md) | `010074F013262000` | 2.2.1 | 12.3.9 | Monolith's engine | NVN | — |
 | [Xenoblade Chronicles X: Definitive Edition](0100453019AA8000/README.md) | `0100453019AA8000` | 1.0.1 | 19.3.2 | Monolith's engine | NVN | 60 fps target |
+| [Xenoblade Chronicles X: Definitive Edition – Nintendo Switch 2 Edition](0400453019AA8001/README.md) | `0400453019AA8001` | 2.0.0 (Switch 2) | 20.5.14 (Ounce) | Monolith's engine | NVN2 | Mac |
 | [Yoshi and the Mysterious Book](0400245021D2C000/README.md) | `0400245021D2C000` | 1.0.2 (Switch 2) | 20.5.15 (Ounce) | Unreal Engine 5.4.4 | NVN2 | — |
 | [Yoshi's Crafted World](01006000040C2000/README.md) | `01006000040C2000` | 1.0.1 | 4.4.1 | Unreal Engine 4.18 era (Good-Feel) | NVN | — |
 
@@ -306,7 +346,7 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | `core_preempt` | `on` / `off` (the default): additionally check higher-priority runnable threads pinned to the caller's core after every thread SVC (`hle_thread.c`). `DM_PREEMPT=0` / `1` overrides it. Wake-triggered same-core handoffs apply to every game with either setting and wait until the threads the wake made runnable block, with no wall-clock cap. Metroid Dread no longer needs this key or its movie request-ring gates; see [Same-core wake handoffs](../../docs/reference/threads.md#same-core-wake-handoffs) |
 | `alloc_big_align` | `on` / `off` (the default): `nn::mem::StandardAllocator::Allocate` aligns blocks of 64 KB or more to 64 KB (`hle_os.c`). Vanillaware's engine (13 Sentinels: Aegis Rim, Unicorn Overlord) takes a memory pool's storage from malloc and cuts ring heaps out of it at 64 KB alignment relative to the pool's GPU address. On the Switch that address is big-page aligned; the host's is the CPU address, only 4 KB aligned, so the last ring heap does not fit and keeps base 0, and the game writes through a null pointer (13 Sentinels entering its first battle, Unicorn Overlord past the title screen) |
 | `shared_font` | Optional, decided by the game files without it (the SDK version the host reads from the `sdk` module, `loader.c` `dm_sdk_major`, and `main`'s imports, `dm_game_imports`): what the shared-font address points at. `bfttf` (SDK 11 and later, when `main` imports `ScalableFontEngineHelper::Decode`) = the 8-byte BFTTF header (with the "already decoded" marker) followed by the TTF, which Mario passes to `Decode`; `ttf` = the TTF itself, which SDK 10 and older games hand straight to `ScalableFontEngine::LoadFont` (Super Mario 3D World + Bowser's Fury: with the header the engine fails with error 403 and the game crashes looking up a glyph; Odyssey, Link's Awakening, Age of Calamity and Three Houses alike) and Unity's player to FreeType (Patrick's Parabox: with the header its Japanese, Korean and Chinese text drew nothing). No profile sets it |
-| `device_api` | Optional, decided by the SDK version without it: the NVN API version `major.minor` that `nvnDeviceGetInteger` reports, 55.15 for SDK 11 and later (what Mario requires) and 53.313 for SDK 10 and older (`hle_nvn.c` `nvn_api`). Games check it and skip creating their device on a mismatch: Super Mario 3D World + Bowser's Fury (SDK 10) requires major 53 and minor ≥ 313. No profile sets it. `DM_NVN_API` overrides. Not part of the shader chain version (only `shader_*` keys are) |
+| `device_api` | Optional override for the NVN API version `major.minor` that `nvnDeviceGetInteger` reports. For SDK 10 and older, the host reads the 53.x minor from a recognized device-info table, with 53.313 as the fallback. Later Switch 1 SDKs use 55.15. Switch 2 SDKs report 231.x. `DM_NVN_API` also overrides the reported version. This key does not affect the shader chain. |
 | `depth_mode` | `gl` (the default, NVN's near = −w) or `zero` (near = 0): the depth mode the game sets with `nvnDeviceSetDepthMode`, for the pipeline bases made before the game runs: the [pipeline archive made offline](../../docs/development.md#the-pipeline-archive-made-offline) for the iPhone (`main0` or `main0_z` vertex entries; built for a game with `pso_mtl4 on` or with `DM_PSO_GPUS`) and the NSP script's Mac prebuild (`DM_PSO_PREBUILD_DEPTH`). The host itself follows the mode the game sets; a wrong value only costs the device its own prebuild. The heap and address region checks of a provisional or derived profile set it when their boot reaches the game's call; without that call they leave it, as no call means unknown, not GL. Keep the key when the profile moves into `dm/games`: it is no shader input. Great Ace Attorney Chronicles, 13 Sentinels (both releases), Big Brain Academy, Link's Awakening, Engage, ASTRAL CHAIN, Luigi's Mansion 3, Octopath Traveler 0 and Kirby Air Riders set `zero` |
 | `render_base` | The 3D views' base size, docked then handheld (`1600x900 1280x720`): what `DM_RENDER_SCALE` scales. `settings.py` writes it into the render scale's row of `launcher.json` as `base`, so a front end can show the setting in pixels. Only for a game with a render scale stub, and only a size its note documents. The slider's top is the stub's largest scale, which the rewriter writes as `RENDER_SCALE` in the fixups table (1.0, or 3.0 for Hades II, whose stub also raises its 1280x720) |
 | `op_mode` | The operation mode the game sees at start: `console` (the default, docked) or `handheld`. Super Mario Galaxy and Captain Toad: Treasure Tracker use `handheld`: docked, their pointer is the Joy-Con gyro, which the host does not have; handheld, it is the touch screen, which the iPhone front end feeds with the touches no gamepad control takes (in the 3D layout, outside the right third of the screen, which is the right stick; `DmGamepad.m`). Handheld also renders at 720p. `DM_OPMODE=0` / `1` overrides, also from `Documents/env.txt` |

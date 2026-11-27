@@ -17,7 +17,7 @@
 #   or in a terminal: python3 scripts/build_ipa_from_nsp.py <NSP folder> -k <prod.keys> [options] (values given on the command line override "Settings", -h lists every option;
 #   without keyboard input a missing value is not asked for but reported as an error; exit code 0 on success, 1 on error, 130 when interrupted, 143 when stopped by SIGTERM, 129 when the terminal closed (SIGHUP)). Command-line options entered in Spyder's run configuration work the same way.
 # Uses only three things: this repository, a folder holding one game's NSPs (the base game, with or without an update; DLC NSPs, when present, are packed too and unlock the add-on content already in the game), and prod.keys.
-#   Instead of NSPs, the folder may hold the game's files as a dump (base/, updates/<version>/, dlc/; scripts/pack_dump.py lists the layout): that needs no prod.keys. A game with no profile is surveyed from those files. A dump has no control data: the name comes from the profile (a provisional one takes the folder's name), and the app has no icon unless --icon / ICON gives it one (--fallback-icon / FALLBACK_ICON: only when the game has none).
+#   Instead of NSPs, the folder may hold the game's files as a dump (base/, updates/<version>/, dlc/; scripts/pack_dump.py lists the layout): that needs no prod.keys. A game with no profile is surveyed from those files. A dump may include extracted Control metadata (control/ or control/Acd_1/); otherwise the name comes from the profile (a provisional one takes the folder's name), and the app has no icon unless --icon / ICON gives it one (--fallback-icon / FALLBACK_ICON: only when the game has none); a Mac app rebuilt in place keeps the icon it had.
 #   Or the folder may hold the game as one NUP container (a .nup file: base game, updates and DLC; scripts/pack_nup.py), or the .nup file may be given in its place: it needs no prod.keys, like a dump; a game with no profile is surveyed from the container's files (its newest version's code modules and RomFS file headers),
 #   and its RomFS images are written straight from it; the name, display version and icon come from the NACP and icon it carries, else as for a dump (its name record is a packer's label, not the game's), and --icon / ICON gives the app an icon when it carries none.
 #   The newest version in the folder is packed. A version the profile registers (when its shader tables cover it and every version in shader_versions is in the folder) is built from the profile as it is; any other
@@ -59,8 +59,8 @@ WORK_DIR = ''                           # the game's build folder (empty = <titl
 OUT_IPA = ''                            # output IPA (empty = <the profile's ipa> in the NSP folder); with PLATFORM 'mac-app' the output app (empty = <game name>.app in the NSP folder)
 APP_NAME = ''                           # app name on the home screen (empty = the game name in the base NSP)
 BUNDLE_ID = ''                          # the app's bundle ID (empty = saved per-game Xcode ID, else org.nxnative.<base game title ID in lowercase>)
-ICON = ''                               # the app icon, a JPEG or PNG of any size (empty = the game's icon from its control data; a dump has none, a NUP may have none)
-FALLBACK_ICON = ''                      # the app icon only when ICON is empty and the game has none of its own (a dump, a NUP without one); empty = such an app's icon is blank
+ICON = ''                               # the app icon, a JPEG or PNG of any size (empty = the game's icon from its control data; a dump or NUP may have none)
+FALLBACK_ICON = ''                      # the app icon only when ICON is empty and the game has none of its own (a dump or NUP without one); empty = such an app's icon is blank
 ROMFS = 'bundle'                        # 'bundle' = the game files go into the IPA (or the Xcode app), as always; 'separate' = they stay out (DM_COPY_ROMFS=NO): the IPA is small, and its rebuilds do not pack or send the RomFS again.
                                         #   Copy it to the phone once per game version with the scripts/push_romfs.sh command printed at the end (the app checks that the image is the one it was built for)
 SHADER_FILES = False                    # True = an NVN game's shader library goes into the IPA as its separate files, for install tools that cannot copy a large file (AltServer: 2 GiB; the game files
@@ -108,6 +108,10 @@ TOOL_PATHS = ['/opt/homebrew/bin', '/usr/local/bin']   # searched after the call
 
 
 class BuildError(Exception):
+    pass
+
+
+class Arm32Error(BuildError):
     pass
 
 
@@ -597,6 +601,37 @@ def extract_flags(app):   # nx_extract's options shared by its extraction calls:
             + (['--allow-damaged'] if ALLOW_DAMAGED else []))
 
 
+def parse_program_list(text, app):
+    """Other programs of application app from `nx_extract --list` output: {index: {'tid': tid, 'in_base': bool, 'in_update': bool}} for every Program NCA with tid != app and (tid & ~0xFFF) == app."""
+    out = {}
+    for line in text.splitlines():
+        m = re.match(r'^(base|update) Program ([0-9a-fA-F]{16})$', line.strip())
+        if not m: continue
+        where, tid = m.group(1), int(m.group(2), 16)
+        if tid == app or (tid & ~0xFFF) != app: continue
+        idx = tid - app
+        entry = out.setdefault(idx, {'tid': tid, 'in_base': False, 'in_update': False})
+        entry['in_base' if where == 'base' else 'in_update'] = True
+    return dict(sorted(out.items()))
+
+
+def list_nsp_programs(nx, keys, base, upd, app, log, env):
+    """Program NCAs besides program 0 in base (and upd when given) for application app via `nx_extract --list` (headers only; no extraction)."""
+    run([nx, keys, base, upd or '-', '-', '--app', f'{app:016x}', '--list'], log, env=env)
+    return parse_program_list(log.read_text(errors='replace'), app)
+
+
+def discover_sibling_programs(fam, app, base, upd, nx, keys, log, env):
+    """Sibling programs (index > 0) of multi-program application app in fam: {index: {'tid', 'in_base', 'in_update'}}. Empty for single-program packages, dumps, and Switch 2 Edition NUPs."""
+    if fam.get('dump'): return {}
+    if fam.get('nup'):
+        n = fam['nup']
+        if not getattr(n, 'multi_program', False): return {}
+        return {idx: {'tid': pid, 'in_base': sbase is not None, 'in_update': bool(svers)}
+                for idx, (pid, sbase, svers) in sorted(n.siblings.items()) if idx > 0}
+    return list_nsp_programs(nx, keys, base, upd, app, log, env)
+
+
 def scan_nsps(nsp_dir, contents_of, want=None):
     """Group by game: {application title ID: {'base': path, 'base_version': N, 'updates': [(version, path)], 'dlc': [(title ID, version, path)]}}. Every package's title IDs and
     versions are those of its content metas, contents_of(paths) -> {path: [(type, title ID, version)] or why it has none} (package_reader), never its file name: a [v<N>] tag that says otherwise is
@@ -773,7 +808,7 @@ def same_build(nsp_dir, app, fam, keys, repo, env, skip=()):
         else:
             try:
                 run([nx, keys, fam['base'], upd or '-', tmp, '--manifest'] + extract_flags(app), logs / 'exefs.log',
-                    ok=(4,))   # 4: a sparse base game (Minecraft Dungeons II), readable only with its update: no main of its own
+                    ok=(4,) if upd is None else ())   # 4: the base alone has no readable main (sparse or the requested program ships only in an update)
             except BuildError:
                 # The base game alone is only a second guess: a base ExeFS that fails its hash check (Pokémon Violet Rev 4) is not used when an update supplies the code
                 if upd is not None or not ups: raise
@@ -807,7 +842,7 @@ MANIFEST_HEAD = '# path\tbytes\tfirst 32 bytes (hex)\n'   # nx_extract --manifes
 
 
 def survey_dump(src, out):
-    """A dump's version folder as survey_nup leaves a NUP package's, with no control data (a dump has none). Returns the files listed"""
+    """A dump's version folder as survey_nup leaves a NUP package's, including extracted Control metadata when present. Returns the files listed"""
     if not pack_dump.is_version(src): raise BuildError(f'{src}: no exefs/main.npdm and romfs')
     out.mkdir(parents=True)
     pack_dump.exefs(src / 'exefs', out / 'ExeFS')
@@ -817,29 +852,31 @@ def survey_dump(src, out):
         if p.lower().endswith('.nro'):
             o = out / 'romfs_nro' / p.lstrip('/'); o.parent.mkdir(parents=True, exist_ok=True)
             pack_dump.clone(src / 'romfs' / p.lstrip('/'), o)
+    pack_dump.copy_control(src, out)
     (out / 'romfs_manifest.tsv').write_text(MANIFEST_HEAD + ''.join(rows))
     return len(rows)
 
 
 def survey_nup(n, k, base, out):
     """A NUP package's files as nx_extract --manifest leaves an NSP's for the survey, without writing the RomFS: out/ExeFS, out/romfs_manifest.tsv (path, size and first 32 bytes of every
-    RomFS file, then the other programs' files it lacks), out/romfs_nro (the NRO modules, whole: their imports decide the graphics API and the modules) and the package's control data, else its
-    base game's. Returns the files listed"""
+    RomFS file, then the other programs' files it lacks, tagged program:<index> in an optional fourth column so romfs_marker stays in the packed program's own RomFS), out/romfs_nro (the NRO
+    modules, whole: their imports decide the graphics API and the modules) and the package's control data, else its base game's. Returns the files listed"""
     out.mkdir(parents=True)
     try: pack_nup.exefs(n, k, out / 'ExeFS')
     except pack_nup.Error as e: raise BuildError(str(e)) from e
     rows, seen = [], set()
-    def walk(d, pre):
+    def walk(d, pre, scope=''):
         for name, isdir, i in n.children(d):
             p = pre + '/' + os.fsdecode(name)
-            if isdir: walk(i, p); continue
+            if isdir: walk(i, p, scope); continue
             if p in seen: continue   # a path the program's own RomFS has
-            seen.add(p); rows.append(f'{p}\t{n.files[i][1]}\t{n.head(i).hex()}\n')
+            seen.add(p); rows.append(f'{p}\t{n.files[i][1]}\t{n.head(i).hex()}' + (f'\t{scope}\n' if scope else '\n'))
             if p.lower().endswith('.nro'):
                 o = out / 'romfs_nro' / p.lstrip('/'); o.parent.mkdir(parents=True, exist_ok=True)
                 with open(o, 'wb') as f: n.copy(i, f)
     try:
-        for d in [pack_nup.romfs_of(k, base), *pack_nup.sibling_romfs(n, k).values()]: walk(d, '')   # then the other programs' RomFS, which this one mounts by program index (a Switch 2 Edition's game data is its Switch 1 program's)
+        walk(pack_nup.romfs_of(k, base), '')
+        for idx, d in pack_nup.sibling_romfs(n, k).items(): walk(d, '', f'program:{idx}')   # then the other programs' RomFS, which this one mounts by program index (a Switch 2 Edition's game data is its Switch 1 program's)
         pack_nup.control(k, out, pack_nup.app_package(n) if base is None else base, say=say)   # what an update lacks, from its base game (or the metadata record)
     except pack_nup.Error as e: raise BuildError(str(e)) from e
     (out / 'romfs_manifest.tsv').write_text(MANIFEST_HEAD + ''.join(rows))
@@ -848,7 +885,7 @@ def survey_nup(n, k, base, out):
 
 def check_aarch64(exefs, what, hint=''):   # main.npdm's 64-bit instruction flag (pg.aarch64): a clear one means A32 code and 32-bit dynamic tables, which the survey and the rewriter cannot read (LNPANDY/NX2Apple#116)
     if pg.aarch64(Path(exefs) / 'main.npdm'): return
-    raise BuildError(f'{what} is a 32-bit ARM program (main.npdm: the 64-bit instruction flag is clear): '
+    raise Arm32Error(f'{what} is a 32-bit ARM program (main.npdm: the 64-bit instruction flag is clear): '
                      f'Apple silicon cannot run 32-bit ARM code, and this repository runs a game\'s own AArch64 code, so it cannot be ported{hint}')
 
 
@@ -886,7 +923,7 @@ def survey(nsp_dir, app, fam, keys, repo, py, env):
         elif not files:
             m = re.search(r'display version ([^\r\n]+)', (logs / 'extract.log').read_text(errors='replace'))
             dv = m.group(1).strip() if m else ''
-    title = nacp.name(ex / 'control.nacp') or (nsp_dir.name if dump else '')   # a dump has no control data: its folder names the game
+    title = nacp.name(ex / 'control.nacp') or (nsp_dir.name if dump else '')
     check_aarch64(ex / 'ExeFS', f'{title or "?"} ({app:016X})')
     F = pg.facts_of(ex / 'ExeFS', ex / 'romfs_manifest.tsv'); mods, rom = F['mods'], F['romfs']   # dm/games/profile_guess.py: what the code modules and the RomFS show
     def size(k): return package_size(fam, k)[1] / 2**30
@@ -948,7 +985,7 @@ def survey(nsp_dir, app, fam, keys, repo, py, env):
                      'legacy paks (version 4, DRAGON QUEST XI S) and version 11 paks without shader code archives (OCTOPATH TRAVELER II) keep them inline in the cooked packages, which the shader split reads file by file')
     if extra: notes.append('modules besides main / sdk: {}; the provisional profile loads {} (load order main, subsdk*, sdk)'.format(", ".join(f'{n} ({mods[n]["kind"]})' for n in extra), G["modules"][0])
                            + ('; the build adds {}: the NROs import from {}'.format(', '.join(nro_add), 'it' if len(nro_add) == 1 else 'them') if nro_add else ''))
-    if rom['mags']['UnityFS'] or 'Unity IL2CPP' in F['markers']: notes.append('Unity: the shaders are Shader objects in UnityFS bundles and data.unity3d, which shader_split.py reads through unityfs.py (written for Unity 2020.3\'s Switch format, also read for 2017.4, 2018.3, 2019.4, 2021.2, 2021.3, 2022.3, 6000.0 and 6000.3; check other Unity versions first)')
+    if rom['mags']['UnityFS'] or 'Unity IL2CPP' in F['markers']: notes.append('Unity: the shaders are Shader objects in UnityFS bundles and data.unity3d, which shader_split.py reads through unityfs.py (written for Unity 2020.3\'s Switch format, also read for 2017.2, 2017.4, 2018.3, 2019.4, 2021.2, 2021.3, 2022.3, 6000.0 and 6000.3; check other Unity versions first)')
     if F['glslc']: notes.append(f'main has {F["glslc"]} GLSLC compiler output magics (0x19866891): shader_split.py takes those that are whole outputs (13 Sentinels and the KTGL games compile their shaders into main; Unity\'s player has 11 of its own)')
     if rom['mags']['Trinity pack']: notes.append('Trinity packs (Game Freak, arc/data.trpfs with its index data.trpfd): the shaders are BNSH inside Oodle Mermaid streams; shader_split.py decodes them with the game\'s own OodleLZ_Decompress in the Mac host, which dm/host/hle_oodle.c finds by the library\'s name string')
     elif rom['mags']['PlatinumGames PKZ']: notes.append('PlatinumGames PKZ archives (pkzl; Bayonetta 3): DAT archives inside, compressed per entry (OodleKraken, ZStandard or None); the shaders are shader objects (VSO / PSO / CSO …) in DATs, which shader_split.py reads (pkz_entries, pg_shader), Oodle Kraken through the game\'s own streaming decoder in the Mac host (dm/host/hle_oodle.c)')
@@ -1010,6 +1047,64 @@ def build_folder(args, nsp_dir, gid):
     return work / 'programs' / f'{gid}_build' if getattr(args, 'in_programs', None) is not None else work
 
 
+SCRATCH_PREFIX = 'nxnative-work-'   # task-owned subdirectories created inside a caller-provided WORK root
+
+
+def sweep_scratch_work(root):
+    """Remove stale task-owned scratch folders left in a caller-provided WORK root by dead builds.
+    Only folders named SCRATCH_PREFIX* carrying a regular pid file whose process is gone are removed:
+    live builds (including an outer multi-program main() in this process), symlinks, and caller-owned entries stay untouched."""
+    try: entries = list(root.iterdir())
+    except OSError: return
+    for d in entries:
+        if not d.name.startswith(SCRATCH_PREFIX) or d.is_symlink() or not d.is_dir(): continue
+        pid_file = d / 'pid'
+        if pid_file.is_symlink() or not pid_file.is_file(): continue
+        try: pid = int(pid_file.read_text().strip())
+        except (OSError, ValueError): continue
+        if pid <= 0: continue
+        try: os.kill(pid, 0); continue   # live process (including this one)
+        except ProcessLookupError: pass
+        except OSError: continue
+        try: rmtree(d)
+        except OSError: pass
+
+
+@contextlib.contextmanager
+def scratch_work(default_dir, gid, environ=None):
+    """Yield the WORK directory for child shader tools.
+    Without a non-blank WORK in the caller's environment, yield default_dir (<build>/tmp) unchanged.
+    With one, resolve it, sweep dead-PID folders from earlier hard-killed runs, create a per-run task-owned
+    subdirectory inside it, and remove only that subdirectory on exit (normal, error, or signal)."""
+    raw = ((os.environ if environ is None else environ).get('WORK') or '').strip()
+    if not raw:
+        yield default_dir
+        return
+    root = Path(os.path.expanduser(raw)).resolve()
+    try:
+        if root.exists() and not root.is_dir():
+            raise BuildError(f'WORK is not a folder: {root}')
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise BuildError(f'cannot use WORK scratch folder {root}: {e}') from e
+    sweep_scratch_work(root)
+    own = None
+    try:
+        own = Path(tempfile.mkdtemp(prefix=f'{SCRATCH_PREFIX}{gid}-', dir=root))
+        (own / 'pid').write_text(f'{os.getpid()}\n')
+    except OSError as e:
+        if own is not None:
+            try: rmtree(own)
+            except OSError: pass
+        raise BuildError(f'cannot create scratch folder in WORK ({root}): {e}') from e
+    say(f'scratch folder (WORK): {own}')
+    try:
+        yield own
+    finally:
+        try: rmtree(own)
+        except OSError: pass
+
+
 def own_profile_folders(args, nsp_dir, app):
     """The folders this script writes a game's provisional and derived profiles to (profile_folder's choices: <NSP folder>/<title ID>_build/profile, <work dir>/profile, --profile-out),
     found without copying anything. A profile there is this script's own output, never a registered one, also when DM_GAMES_DIR reaches it (the bring-up recipe the script prints,
@@ -1035,7 +1130,7 @@ def profile_folder(args, nsp_dir, app):
     return new
 
 
-def write_profile(pdir, app, f):
+def write_profile(pdir, app, f, program_of=None):
     """A provisional game.tsv (+ the empty tables) from the survey, in pdir (outside the repository). An existing game.tsv is kept, so it can be edited by hand; delete it to regenerate.
     The keys the game files decide come from dm/games/profile_guess.py (each written under its reason): the modules to load, the memory partition, engine presets; the rest keeps game.py's
     defaults until the heap check (below) or a developer sets it. What the files show at every build is not written: the graphics API and the shader sources (shader_sources), the shared-font
@@ -1059,12 +1154,13 @@ def write_profile(pdir, app, f):
     def key(k, default=None):   # a key with the reason profile_guess.py gives for it above it; None when neither the guess nor a default has one
         v, why = G[k] if k in G else (default, '')
         return [] if v is None else ([f'# {why}'] if why else []) + [f'{k}{T}{v}']
+    prog_of = [f'# a program of {program_of:016X}, packed with it', f'program_of{T}{program_of:016X}'] if program_of is not None else []
     # shader_note is a shader input (dmsh_chain.profile_rows, and the shader map's header): it reads as a registered profile's does, so moving this profile into dm/games keeps every shader's cache key.
     # Super Mario RPG: "(provisional profile)" in this note scheduled all 82,032 libraries again, about 1.5 h, for identical shaders. The comment below says what this file is
     L = ['# Provisional game profile (generated by scripts/build_ipa_from_nsp.py from the survey with dm/games/profile_guess.py, not checked by hand)',
          f'# {name}, SDK {F["sdk"] or "?"}, survey {f["survey"]}', '',
          '# ---- Identity ----', f'title_id{T}{app:016X}', f'program_id{T}{(F["program"] or app):016X}', '',
-         '# ---- App ----', f'name{T}{name}', f'ipa{T}{ipa_name(name, app)}', f'app_category{T}public.app-category.games', *key('pad_layout'), *key('op_mode'), '',
+         '# ---- App ----', *prog_of, f'name{T}{name}', f'ipa{T}{ipa_name(name, app)}', f'app_category{T}public.app-category.games', *key('pad_layout'), *key('op_mode'), '',
          '# ---- Versions ----', T.join(['build', f['version'], f['display']] + [f'{m}={F["mods"][m]["bid"]}' for m in mods]), f'package{T}{f["version"]}', f'shader_versions{T}{f["version"]}', '',
          '# ---- Files ----', *key('modules'), f'romfs_marker{T}{R["biggest"][1]}', f'zip_store{T}{":".join(store + [".metallib"])}', '',
          '# ---- Memory ----', *key('mem_reserve'), *key('mem_alias'), *key('mem_stack'), *key('app_pool'), *key('sys_resource'), '',
@@ -1212,8 +1308,12 @@ def fingerprint(*items, env=None):
         if kind == 'files':
             for p in map(rfs.Path, v):
                 h.update(p.name.encode() + b'\0')
-                try: h.update(hashlib.sha256(p.read_bytes()).digest())
+                try:
+                    fh = hashlib.sha256()
+                    with rfs.open(p, 'rb') as f:
+                        while chunk := f.read(1 << 20): fh.update(chunk)
                 except OSError: h.update(b'missing')
+                else: h.update(fh.digest())
         elif kind in ('tree', 'stat'):
             for rel, st in files_under(v): h.update(f'{rel}\0{st.st_size}\0{st.st_mtime_ns if kind == "stat" else ""}\n'.encode())
         elif kind == 'cmd':
@@ -1259,6 +1359,17 @@ def chain_files(repo):   # what the iOS shaders run: not the split's readers (sh
 SPLIT_TABLES = ('shader_facts_manual.tsv', 'shader_map.tsv', 'shader_facts.tsv', 'shader_pairs.tsv', 'pso_pairs.tsv', 'geo_pairs.tsv')   # the profile tables the split reads or is checked against (derive_profile keys on them too)
 
 
+def dlc_inputs(dlc_roms):
+    """Fingerprint inputs for optional DLC roots: DLC has no registered module build to pin its contents,
+    so include each root's name, entry stats, and (for packed .img files) its file identity even when file sizes stay the same."""
+    out = []
+    for r in dlc_roms:
+        out.extend((('dlc', Path(r).name), ('stat', r)))
+        if os.path.isfile(r):
+            out.append(('dlc-image', romfs_image.file_identity(r)))
+    return out
+
+
 def split_profile_inputs(g):   # shader_split.py's GAME reads, plus the tables the packer checks or writes; renderer settings, notes and translation tables are not extraction inputs
     settings = [(name, g.get(name, '')) for name in ('modules', 'shader_groups', 'shader_note', 'shader_key_skip')]
     tables = [g.table(n) for n in SPLIT_TABLES]
@@ -1272,8 +1383,9 @@ def side_table(g, pkg, name):   # the profile's table, else the split's copy bes
     return g.table(name) if g.table(name).is_file() else pkg.with_name(name)
 
 
-def split_output_key(pkg, g):   # detect deleted/edited packages and supplemental pairs before reusing a successful split
-    return fingerprint(package_key(pkg), ('files', [pkg.with_name(n) for n in SPLIT_SIDE_TABLES if not g.table(n).is_file()]))
+def split_output_key(pkg, g, pkg_key=None):   # detect deleted/edited packages and supplemental pairs before reusing a successful split
+    if pkg_key is None: pkg_key = package_key(pkg)
+    return fingerprint(pkg_key, ('files', [pkg.with_name(n) for n in SPLIT_SIDE_TABLES if not g.table(n).is_file()]))
 
 
 def package_key(pkg):   # the shader package's content (file names and bytes): what the iOS shaders are built from
@@ -1442,6 +1554,29 @@ def build_sources(repo, game, mods):
     src = pg.build_sources(exefs, rfs.source(game), mods)
     try: text = json.dumps(src) if key and json.loads(json.dumps(src)) == {name: list(v) for name, v in src.items()} else None   # only what reads back as it was
     except (TypeError, ValueError): text = None   # a value JSON cannot hold: found again each time
+    with contextlib.suppress(OSError):
+        if key and text: atomic_text(memo, key + '\n' + text + '\n')
+        elif key: memo.unlink(missing_ok=True)
+    return src
+
+
+def dlc_decoder_sources(repo, work, game, dlc_roms):
+    """Decoder-backed NVN archive sources across dlc_roms (profile_guess.py decoder_sources), kept in work/aoc.sources while every DLC root is an image file with unchanged
+    path, size and time, ExeFS/main is unchanged, and the readers are the same. Directory-backed DLC roots are read each time."""
+    if not dlc_roms:
+        return {'oodle_packs': (False, ''), 'ue_legacy': (False, '')}
+    main, memo, key = game / 'ExeFS/main', work / 'aoc.sources', None
+    if all(r.is_file() for r in dlc_roms):
+        imgs = [(str(r), st.st_size, st.st_mtime_ns) for r in dlc_roms for st in (r.stat(),)]
+        key = fingerprint('dlc-sources 1', imgs, ('files', [main]) if main.is_file() else None,
+                          ('files', python_tool_files(repo, 'dm/games/profile_guess.py', ('dm/games', 'dm/tools', 'dm/gfx/tools'))))
+        try:
+            k, _, text = memo.read_text().partition('\n')
+            if k == key: return {name: tuple(v) for name, v in json.loads(text).items()}
+        except (OSError, ValueError, AttributeError, TypeError): pass
+    src = pg.decoder_sources(dlc_roms, mains=[main] if main.is_file() else ())
+    try: text = json.dumps(src) if key and json.loads(json.dumps(src)) == {name: list(v) for name, v in src.items()} else None
+    except (TypeError, ValueError): text = None
     with contextlib.suppress(OSError):
         if key and text: atomic_text(memo, key + '\n' + text + '\n')
         elif key: memo.unlink(missing_ok=True)
@@ -1636,11 +1771,21 @@ def patch_files(repo, exe_dir, mods, game_id=None):
             if p in shared or p.parent.name == selected or any(i in p.read_text(errors='replace') for i in ids)]
 
 
+def _nrr_files(romfs):
+    out = []
+    for dp, _, fs in rfs.walk(romfs):
+        for name in fs:
+            if not name.endswith('.nrr'): continue
+            p = rfs.Path(dp) / name
+            if p.is_file(): out.append(p)
+    return sorted(out)
+
+
 def collect_nros(py, repo, romfs, dst, env, logs):
     """The NROs a game registers in NRR files (RomFS *.nrr) and loads at run time with nn::ro, found by their SHA-256 as loose files or inside the RomFS's archives (dm/tools/nro_collect.py):
     {module name: NRO path}, {} for a game without NRRs. The host maps their rewritten copies at start and loads one when the game asks (loader.c "NRO modules"; Super Smash Bros. Ultimate:
     98 in data.arc). Reused while the NRRs, RomFS tree and collection tools are unchanged"""
-    nrrs = sorted(p for p in romfs.rglob('*.nrr') if p.is_file())   # Super Smash Bros. Ultimate keeps them in a folder named .nrr
+    nrrs = _nrr_files(romfs)   # Super Smash Bros. Ultimate keeps them in a folder named .nrr
     kf = dst.with_name(dst.name + '.key')
     if not nrrs:
         rmtree(dst); rmtree(kf)   # an update can remove its NRRs: do not carry the previous manifest into the rewrite
@@ -1709,26 +1854,56 @@ def rewrite(py, repo, exe_dir, out, env, logs, g, provisional=False):
     tmp = out.with_name(out.name + '.partial'); rmtree(tmp); tmp.mkdir(parents=True); logs.mkdir(parents=True, exist_ok=True)
     if manifest.is_file(): shutil.copyfile(manifest, tmp / 'nro.tsv')   # refused-only manifests preserve the game's offline registration path too
     PROG.set(step=', '.join(mods) + (f' and {len(nros)} NROs' if nros else ''), done=0, total=len(names), unit='modules')
-    procs, logf, todo, cores = {}, {}, list(names), max(2, os.cpu_count() or 4)
+    groups, todo, cores, stop_sig = {}, list(names), max(2, os.cpu_count() or 4), signal.SIGTERM
     jobs = max(1, min(cores, 2 * cores // max(1, len(names))))   # patch_nso.py workers per module, so parallel rewrites don't oversubscribe
     rewrite_env = dict(env, DM_REWRITE_J=str(workers if workers is not None else jobs))
+    def stop_remaining():
+        try: proc_group.stop_all([grp for grp, _ in groups.values()], stop_sig)
+        finally:
+            for _, fh in groups.values(): fh.close()
+            groups.clear()
     try:
-        while todo or procs:
-            while todo and len(procs) < cores:
-                m = todo.pop(0); logf[m] = open(logs / f'rewrite_{m}.log', 'w')
-                procs[m] = subprocess.Popen([str(py), str(repo / 'dm/tools/patch_nso.py'), str(src[m]), str(tmp), m], env=rewrite_env, stdout=logf[m], stderr=subprocess.STDOUT)
-            for m in [m for m in procs if procs[m].poll() is not None]:
-                p = procs.pop(m); logf[m].close(); PROG.set(done=len(names) - len(todo) - len(procs))
-                if p.returncode:
+        while todo or groups:
+            while todo and len(groups) < cores:
+                m = todo.pop(0); f = open(logs / f'rewrite_{m}.log', 'w')
+                try:
+                    grp = proc_group.Group([str(py), str(repo / 'dm/tools/patch_nso.py'), str(src[m]), str(tmp), m], env=rewrite_env, stdout=f, stderr=subprocess.STDOUT)
+                except BaseException:
+                    f.close(); raise
+                groups[m] = (grp, f)
+            for m in [m for m, (grp, _) in groups.items() if grp.p.poll() is not None]:
+                grp, f = groups[m]
+                if grp.p.returncode:
+                    rc = grp.p.returncode; stop_remaining()
                     log = logs / f'rewrite_{m}.log'
                     PROG.end(ok=False)
-                    PROG.say(f'---- last lines of {log} ----\n' + ''.join(collections.deque(open(log, errors='replace'), maxlen=40)).rstrip('\n'))
-                    raise BuildError(f'patch_nso.py exit code {p.returncode} on {m} (full output: {log})')
-            time.sleep(0.2)
-    finally:   # an error or an interrupt stops the other rewrites
-        for p in procs.values():
-            if p.poll() is None: p.terminate(); p.wait()
-        for f in logf.values(): f.close()
+                    with open(log, errors='replace') as lf: tail = ''.join(collections.deque(lf, maxlen=40)).rstrip('\n')
+                    PROG.say(f'---- last lines of {log} ----\n' + tail)
+                    raise BuildError(f'patch_nso.py exit code {rc} on {m} (full output: {log})')
+                groups.pop(m)
+                try:
+                    rc = grp.finish()
+                    if grp.stragglers:
+                        msg = f'[RED] patch_nso.py exited, but {proc_group.describe(grp.stragglers)} still ran {grp.drain:g} s later and was stopped: what it writes may be incomplete\n'
+                        os.write(f.fileno(), msg.encode())
+                except BaseException:
+                    groups[m] = (grp, f); raise
+                finally:
+                    if m not in groups: f.close()
+                PROG.set(done=len(names) - len(todo) - len(groups))
+                if rc or grp.stragglers:
+                    stop_remaining()
+                    log = logs / f'rewrite_{m}.log'
+                    PROG.end(ok=False)
+                    with open(log, errors='replace') as lf: tail = ''.join(collections.deque(lf, maxlen=40)).rstrip('\n')
+                    PROG.say(f'---- last lines of {log} ----\n' + tail)
+                    why = f'patch_nso.py exit code {rc} on {m}' if rc else f'patch_nso.py exited on {m}, but {proc_group.describe(grp.stragglers)} still ran {grp.drain:g} s later and was stopped: what it writes may be incomplete'
+                    raise BuildError(f'{why} (full output: {log})')
+            if todo or groups: time.sleep(0.2)
+    except KeyboardInterrupt:
+        stop_sig = signal.SIGINT; raise
+    finally:   # an error or an interrupt stops the other rewrite groups
+        stop_remaining()
     rmtree(kf); swap_in(tmp, out); kf.write_text(f'{key}\n')
     PROG.end(', '.join(mods) + (f' and {len(nros)} NROs' if nros else ''))
     return capture_nro(py, repo, exe_dir, out, nro_dir, env, logs, g, provisional)
@@ -1946,8 +2121,51 @@ def check_glslc_coverage(observed, g):
 UE_DECODE_SECS = 300   # the longest Oodle decode run: Octopath Traveler 0's 10,596 shaders take about 10 s, the boot up to nnMain included
 
 
-def ue_stamp(d):   # what an extraction's decoded shader archives were made from: its paks and IoStore TOCs (paths and sizes)
-    return 'ue-archives-v2\n' + ''.join(f'{p.relative_to(rfs.source(d))}\t{p.stat().st_size}\n' for p in sorted([*(rfs.source(d)).rglob('*.pak'), *(rfs.source(d)).rglob('*.utoc')]))
+def _ue_file_id(path):
+    try: return romfs_image.file_identity(path)
+    except OSError: return 'missing'
+
+
+def _ue_decoder_key(repo):
+    tools = python_tool_files(repo, 'dm/gfx/tools/uepak.py', ('dm/gfx/tools', 'dm/tools'))
+    oodle = repo / 'dm/host/hle_oodle.c'
+    return fingerprint(('files', tools + ([oodle] if oodle.is_file() else [])))
+
+
+def ue_stamp(d, repo=None):
+    """Identity of an extraction's Unreal shader decode inputs: containing RomFS.img identity when packed, or participating pak/TOC/UCAS/Manifest identities when loose,
+    plus the source ExeFS/main used to select keys and the versions of the applicable decoder inputs."""
+    r = Path(repo) if repo is not None else Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(r / 'dm/gfx/tools')); import uepak
+    d = Path(d)
+    src = rfs.source(d)
+    if rfs.is_image(src):
+        romfs_sig = {'kind': 'image', 'image': _ue_file_id(src)}
+    else:
+        files = {}
+        src_path = Path(src)
+        if src_path.is_dir():
+            for dp, _, fs in os.walk(src_path):
+                for name in fs:
+                    if name.endswith(('.pak', '.utoc', '.ucas')):
+                        p = Path(dp) / name
+                        rel = p.relative_to(src_path).as_posix()
+                        files[rel] = _ue_file_id(p)
+                        if name.endswith('.utoc'):
+                            for up in uepak.toc_ucas_paths(p):
+                                upath = Path(up)
+                                urel = upath.relative_to(src_path).as_posix()
+                                files.setdefault(urel, _ue_file_id(upath))
+            for p in src_path.iterdir():
+                if p.name.startswith('Manifest_') and p.name.endswith('.txt') and p.is_file():
+                    files[p.relative_to(src_path).as_posix()] = _ue_file_id(p)
+        romfs_sig = {'kind': 'loose', 'files': [[k, files[k]] for k in sorted(files)]}
+    payload = {
+        'romfs': romfs_sig,
+        'main': _ue_file_id(d / 'ExeFS/main'),
+        'decoder': _ue_decoder_key(r),
+    }
+    return 'ue-archives-v3\n' + json.dumps(payload, separators=(',', ':'), sort_keys=True) + '\n'
 
 
 def decode_ue_shaders(repo, dirs, pkg_ver, patched, work, env, logs, g):
@@ -1956,15 +2174,22 @@ def decode_ue_shaders(repo, dirs, pkg_ver, patched, work, env, logs, g):
     (DM_OODLE_JOB, dm/host/hle_oodle.c: right before nnMain, then the host exits), and the decoded archives go to <version dir>/ue_shaders, where shader_split.py reads them.
     The job runs the packed version's code (Oodle's format does not change between builds). Unreal Engine 4.26 and later compress shaders with LZ4 by default (DRAGON QUEST VII Reimagined),
     which uepak.py decodes itself, as it does with Zlib in version 1 archives. Unreal Engine 5.6 (FINAL FANTASY RESONANCE) keeps its shader libraries in the IoStore container instead, two layers
-    of Oodle (container blocks, then each shader group): uepak.py reads them through the game's Oodle in the host's tool mode (uepak.OodleHost), with no boot. A folder whose stamp matches its paks is reused"""
+    of Oodle (container blocks, then each shader group): uepak.py reads them through the game's Oodle in the host's tool mode (uepak.OodleHost), with no boot. A folder whose stamp matches its inputs is reused"""
     sys.path.insert(0, str(repo / 'dm/gfx/tools')); import uepak
-    todo = {v: d for v, d in dirs.items() if not ((d / 'ue_shaders/stamp').exists() and (d / 'ue_shaders/stamp').read_text() == ue_stamp(d))}
+    stamps = {v: ue_stamp(d, repo) for v, d in dirs.items()}
+    todo = {}
+    for v, d in dirs.items():
+        sf = d / 'ue_shaders/stamp'
+        try: ok = sf.is_file() and sf.read_text() == stamps[v]
+        except OSError: ok = False
+        if not ok: todo[v] = d
     PROG.stage('UE shader decode')
     if not todo:
         say(f'reusing the decoded shader archives: {", ".join(str(d / "ue_shaders") for d in dirs.values())}')
         PROG.end('reused'); return
     t0, total, host = time.time(), 0, None
     for v, d in todo.items():
+        before = stamps[v]
         jd, rd, log = work / f'tmp/ue_job_{v}', work / 'tmp/ue_run', logs / f'ue_decode_{v}.log'
         rmtree(jd); rmtree(rd)
         for s in ('save', 'temp'): (rd / s).mkdir(parents=True)
@@ -1994,7 +2219,11 @@ def decode_ue_shaders(repo, dirs, pkg_ver, patched, work, env, logs, g):
                 PROG.say(f'---- last lines of {log} ----\n' + ''.join(collections.deque(open(log, errors='replace'), maxlen=20)).rstrip('\n'))
                 raise BuildError(f'the Oodle decode run stopped with exit {rc} (host output: {log})')
         out = d / 'ue_shaders.partial'; rmtree(out)
-        uepak.finish(str(jd), str(out)); (out / 'stamp').write_text(ue_stamp(d))
+        uepak.finish(str(jd), str(out)); (out / 'stamp').write_text(before)
+        if ue_stamp(d, repo) != before:
+            rmtree(out); rmtree(jd); rmtree(rd)
+            PROG.end(ok=False)
+            raise BuildError(f'{v}: Unreal shader inputs changed while decoding; run again when inputs are stable')
         swap_in(out, d / 'ue_shaders'); rmtree(jd); rmtree(rd); total += sum(x['shaders'] for x in listing)
     PROG.end(f'{total:,} shaders in {hms(time.time() - t0)}')
 
@@ -2092,7 +2321,7 @@ def capture_jit(py, repo, d, patched, work, env, logs, g):
     return out
 
 
-def capture_shaders(repo, d, patched, work, env, logs, g, api):
+def capture_shaders(repo, d, patched, work, env, logs, g, api, msl=None, aoc=None):
     """Shaders no game file holds, made at run time: a Vulkan game without SPIR-V files (Super Mario Galaxy: Hagi's GX shaders, from its pipeline database) or an OpenGL game whose GLSL is put
     together at run time (Balatro: LÖVE adds its header and its built-in code to each of the game's shader files, in Lua). The game boots in the Mac host (headless and silent, starting with
     no packed shader library) with DM_VK_CAPTURE or DM_GL_CAPTURE. GL compiles any missing stage before handing control back to the game. Both save the sources to <version dir>/vk_capture
@@ -2110,7 +2339,9 @@ def capture_shaders(repo, d, patched, work, env, logs, g, api):
     rmtree(cap); rmtree(rd); cap.mkdir(parents=True)
     for x in ('save', 'temp', 'msl'): (rd / x).mkdir(parents=True)
     # Everything the run writes stays in <id>_build, including the temporary GL compiler outputs.
-    henv = dict(env, DM_ROMFS=str(rfs.source(d)), DM_SAVE=str(rd / 'save'), DM_TEMP=str(rd / 'temp'), DM_MSL_DIR=str(rd / 'msl'), **{C['env']: str(cap)})
+    henv = dict(env, DM_ROMFS=str(rfs.source(d)), DM_SAVE=str(rd / 'save'), DM_TEMP=str(rd / 'temp'), DM_MSL_DIR=str(msl or rd / 'msl'), **{C['env']: str(cap)})
+    if msl: henv['DM_NVN_SHMAP'] = str(g.table('shader_map.tsv'))
+    if aoc: henv['DM_AOC_DIR'] = str(aoc)
     if api == 'gl':   # id Tech 4's BFG renderer: every render program converted by the game itself (exit 1: main has no such renderer)
         henv.update(DM_GL_CAPTURE_COMPILER=str(repo / 'dm/gfx/tools/gl_shaders.py'), DM_GL_CAPTURE_PYTHON=sys.executable)
         job = rd / 'renderprogs.job'
@@ -2276,8 +2507,12 @@ def rewrite_id(patched):   # the rewrite's key (rewrite: what the rewritten modu
     except OSError: return ''
 
 
-def region_checked(g, patched):   # the region check's stamp in the profile ("# address regions: ... (rewrite <id>)"): later runs of the same rewrite skip it (a new cut checks again)
-    return any(l.startswith('# address regions: ') and l.endswith(f'(rewrite {rewrite_id(patched)})') for l in (g.dir / 'game.tsv').read_text(encoding='utf-8').splitlines())
+def region_checked(g, patched, mac_only=False):
+    """The region check's stamp in the profile ("# address regions: ... (rewrite <id>)"): later runs of the same rewrite skip it (a new cut checks again). A stamp ending "(rewrite <id>, Mac only)" is that of
+    a Mac-only build whose verdict depended on the Mac's larger alias region: it answers for Mac-only builds alone, so a build with an IPA still boots the game and reports the iPhone layout (GitHub issue #2860)"""
+    rid = rewrite_id(patched)
+    ends = (f'(rewrite {rid})', f'(rewrite {rid}, Mac only)') if mac_only else (f'(rewrite {rid})',)
+    return any(l.startswith('# address regions: ') and l.endswith(ends) for l in (g.dir / 'game.tsv').read_text(encoding='utf-8').splitlines())
 
 
 CHECKED_CAP = 'from the address region check'   # the reason line of a stdalloc_cap the region check set (checked_cap): a later check works it out again
@@ -2288,11 +2523,13 @@ def checked_cap(g):   # the profile's stdalloc_cap row is the one an earlier reg
     return any(l.startswith('stdalloc_cap\t') and i and lines[i - 1].startswith(f'# {CHECKED_CAP}') for i, l in enumerate(lines))
 
 
-def region_check(repo, d, patched, work, env, logs, g):
+def region_check(repo, d, patched, work, env, logs, g, mac_only=False):
     """The address region check of a provisional or derived profile whose game has virtual address memory: the game boots in the Mac host (headless and silent, no shader libraries) with the
     Mac host's console-sized alias region (64 GB for Switch 1, 128 GB for Switch 2), so whatever it reserves fits, until it has run REGION_CHECK_NNMAIN_SECS in nnMain. The host's region table (DM_REGIONS, from the
     observation gates the rewriter places in the sdk) says which regions the game took, where each request returns to in the game, through which SDK API and how much of it it used, and where they reach
-    against the profile's alias region (profile_guess.py region_findings). A red line when they reach past it: on an iPhone a region would fail. The one fix it makes: when the
+    against the profile's alias region (profile_guess.py region_verdict). A red line when they reach past it: on an iPhone a region would fail. mac_only (a build that makes no IPA): when the regions pass the
+    iPhone layout, region_verdict evaluates them directly against the alias region this run had (and stays red with the stop reason if the boot exited early or never reached nnMain), and the stamp is marked
+    Mac only so an iPhone build checks again (region_checked). The one fix it makes: when the
     regions made after a StandardAllocator region need more room than the host's cap leaves them, it sets stdalloc_cap (profile_guess.py stdalloc_room), unless the profile sets one
     by hand, which it checks instead (Absolum: 2.56 GB from its first seconds; 2.5 and 2.72 GB both play). Others are reported, not changed: the fix depends on who lays the region out. A derived profile gets it too: its build has none of the registered builds' fixed-address cuts, only the function-matched ones
     (Super Smash Bros. Ultimate 13.0.1, GitHub issue #375), so a region those cuts shrank shows here before the IPA aborts on an iPhone. The profile is stamped"""
@@ -2330,13 +2567,17 @@ def region_check(repo, d, patched, work, env, logs, g):
             g = set_keys(g, {'stdalloc_cap': (f'{need:#x}' if need else None, f'{CHECKED_CAP}: the regions made after the StandardAllocator region need more room than the 256 MB the host leaves them')}, 'Address region check')
             say(f'address regions: stdalloc_cap {need:#x} ({need / 2**30:.2f} GB) set in {g.dir / "game.tsv"}' if need else 'address regions: the stdalloc_cap an earlier check set is no longer needed: removed')
         have = need or 0
-    found = pg.region_findings(rows, alias, syms, REGION_CHECK_NNMAIN_SECS, have)
-    if not rows: how = 'no region table (the sdk has no region gates)' if rc is None or '>>> nnMain' in log.read_text(errors='replace') else f'the host stopped before nnMain (exit {rc})'
+    reached = '>>> nnMain' in ran
+    stopped = (f'the host stopped before the end of the check window (exit {rc})' if rc is not None and reached else
+               f'the host stopped before nnMain (exit {rc})' if rc is not None else
+               'the host never reached nnMain within the time limit' if not reached else None)
+    found, mac_stamp = pg.region_verdict(rows, alias, syms, REGION_CHECK_NNMAIN_SECS, have, mac_only=mac_only, stopped=stopped)
+    if not rows: how = 'no region table (the sdk has no region gates)' if rc is None or reached else f'the host stopped before nnMain (exit {rc})'
     elif not found: how = 'no address regions'
     else: how = found[-1][1]
     for red, text in found: say(('[RED] ' if red else '') + 'address regions: ' + text)
     p = g.dir / 'game.tsv'; old = [l for l in p.read_text(encoding='utf-8').rstrip('\n').split('\n') if not l.startswith('# address regions: ')]
-    atomic_text(p, '\n'.join(old).rstrip('\n') + f'\n\n# address regions: {time.strftime("%Y-%m-%d")}, {how} (rewrite {rewrite_id(patched)})\n')
+    atomic_text(p, '\n'.join(old).rstrip('\n') + f'\n\n# address regions: {time.strftime("%Y-%m-%d")}, {how} (rewrite {rewrite_id(patched)}{", Mac only" if mac_stamp else ""})\n')
     PROG.end(f'{how} in {hms(time.time() - t0)}', ok=not any(red for red, _ in found))
     return type(g)(g.dir)
 
@@ -2473,7 +2714,7 @@ def split_shaders(py, repo, roms, mains, pkg, env, logs, g, provisional=False, o
         if not folder.is_dir(): raise BuildError(f'no such GLSLC capture folder (--glslc-play): {folder}')
         play_files.extend(p for p in sorted(folder.glob('*.glslc')) if p.is_file() and re.fullmatch(r'[0-9a-f]{16}\.glslc', p.name))
     if play_files: inputs += ['glslc_play', ('files', play_files)]
-    inputs += [item for r in dlc_roms for item in (('dlc', Path(r).name), ('stat', r))]   # DLC has no registered module build to pin its contents: include its index and re-extraction times, even when file sizes stay the same
+    inputs += dlc_inputs(dlc_roms)
     if oodle:   # a host or rewriter fix can change what the game's decoder produces
         PROG.set(step='building the Mac host for the game\'s Oodle decoder'); env = dict(env, **oodle())
         host = Path(env['DM_OODLE_HOST'])
@@ -2500,23 +2741,25 @@ def split_shaders(py, repo, roms, mains, pkg, env, logs, g, provisional=False, o
             promote(derive_compute, 'compute')
             key = fingerprint(*inputs, *split_profile_inputs(g))
     have_pairs = all(side_table(g, pkg, n).is_file() for n in SPLIT_SIDE_TABLES)   # a split from before geo_pairs.tsv runs again once
-    if key and pkg.is_dir() and have_pairs and (note := reused(kf, key)) is not None and reused(outputkf, split_output_key(pkg, g)) is not None:
-        PROG.end(f'{note}, reused (inputs unchanged)'); return package_key(pkg)
+    if key and pkg.is_dir() and have_pairs and (note := reused(kf, key)) is not None:
+        pkg_key = package_key(pkg)
+        if reused(outputkf, split_output_key(pkg, g, pkg_key)) is not None:
+            PROG.end(f'{note}, reused (inputs unchanged)'); return pkg_key
     PROG.set(step='splitting')
     tmp = pkg.with_name(pkg.name + '.partial'); rmtree(tmp); (tmp / 'tables').mkdir(parents=True)
     def counted(ln):   # shader_split.py's 'progress: <done>/<total>'
         if m := re.fullmatch(r'progress: (\d+)/(\d+)', ln): PROG.set(done=int(m[1]), total=int(m[2]), unit='files')
-    extra = [','.join(map(str, dlc_roms))] if dlc_roms or play_files else []
+    extra = [json.dumps(list(map(str, dlc_roms)))] if dlc_roms or play_files else []
     if play_files:
         manifest = tmp / 'glslc_play.json'
         manifest.write_text(json.dumps([str(p) for p in play_files]))
         extra.append(str(manifest))
-    run([py, repo / 'dm/gfx/tools/shader_split.py', ','.join(map(str, roms)), ','.join(map(str, mains)), tmp / 'pkg'] + [tmp / 'tables' / n for n in names + ('pso_pairs.tsv',)] + extra,
+    run([py, repo / 'dm/gfx/tools/shader_split.py', '--json-paths', json.dumps(list(map(str, roms))), json.dumps(list(map(str, mains))), tmp / 'pkg'] + [tmp / 'tables' / n for n in names + ('pso_pairs.tsv',)] + extra,
         logs / 'shader_split.log', env=dict(env, DM_SPLIT_REGISTERED_MAP=registered_map), on_line=counted)
     text = (logs / 'shader_split.log').read_text(errors='replace')
     m = re.search(r'shaders: (\d+) \(', text)
     bad = re.search(r'^\[RED\] (\d+) file\(s\) could not be read.*$', text, re.M)   # the split leaves out a file no reader reads (its own red line per file in the log) and goes on
-    if bad and not provisional:   # the profile's tables were split from every file: one that does not read now is a reader change
+    if bad and not provisional and not ALLOW_DAMAGED:   # --allow-damaged still has to pass every registered shader-table comparison below
         raise BuildError(f'{bad.group(0).removeprefix("[RED] ")}; the profile\'s tables hold every file\'s shaders (each file in {logs / "shader_split.log"})')
     if bad: say(f'{bad.group(0)}; the IPA goes without them (each file in {logs / "shader_split.log"})')
     if m and m.group(1) == '0':   # dmsh_build.py would make no library, and the iOS shader step stop with no word of why
@@ -2541,16 +2784,18 @@ def split_shaders(py, repo, roms, mains, pkg, env, logs, g, provisional=False, o
             raise BuildError(f'the split shader tables differ from game profile {g.id}\'s:\n{rows}\nEither these game files are not the versions the profile registers, or shader_split.py now reads them differently and the profile\'s tables were not split again (the split\'s tables: {tmp / "tables"})')
     rmtree(kf); rmtree(outputkf); swap_in(tmp / 'pkg', pkg); rmtree(tmp)
     note = (f'{int(m.group(1)):,} shaders' if m else '') + (f', {bad.group(1)} file(s) unreadable' if bad else '')
+    pkg_key = None
     if key:   # an own profile's tables are outputs too; the next split checks the profile after they were written
         key = fingerprint(*inputs, *split_profile_inputs(g))
-        outputkf.write_text(split_output_key(pkg, g) + '\n')
+        pkg_key = package_key(pkg)
+        outputkf.write_text(split_output_key(pkg, g, pkg_key) + '\n')
         kf.write_text(f'{key}\n{note}\n')
     if promoted == 'dlc' and dlckey: dlckf.write_text(f'{dlckey}\nOptional shader content\n')
     else: rmtree(dlckf)
     if promoted == 'compute' and cskey: cskf.write_text(f'{cskey}\nNewly decoded compute kernels\n')
     else: rmtree(cskf)
     PROG.end(note)
-    return key and package_key(pkg)
+    return pkg_key
 
 
 def shader_keys(g, source_prefix=''):   # the shaders dmsh_build.py builds, shared by progress and the stale-library event
@@ -2573,8 +2818,12 @@ def seen_logs(work, app):   # the logs a --seen-shaders build reads: the run com
     return work / 'run/host.log', logs / f'{app:016X}.log', logs / f'{app:016X}.prev.log'
 
 
-def seen_keys(g, sh, logs):
-    """The keys of a partial Mac library: the profile's shader_seen.tsv, those of the last partial build (sh/partial-keys.txt) and those the logs report missing. The file keeps what earlier runs added, as a
+def seen_lists(work, app):   # the keys the hosts themselves kept of what their library lacked (DM_NVN_MISSING_KEYS, nvn_mtl.m shader_missing_note): the run command's and the app's. A log is gone after two more starts; these stay, and hold each key once
+    return work / 'run/shader_missing.txt', Path(os.path.expanduser('~/Library/Application Support/nxnative')) / f'{app:016X}' / 'shader_missing.txt'
+
+
+def seen_keys(g, sh, logs, lists=()):
+    """The keys of a partial Mac library: the profile's shader_seen.tsv, those of the last partial build (sh/partial-keys.txt), those the logs report missing and those the hosts kept (lists, seen_lists). The file keeps what earlier runs added, as a
     shader that loads no longer shows in the next log. Imported play captures also go in on the first rebuild. Only keys of the shader map go in: a list or a log of another game version may name others, and the builder knows only the map's. No key at all stops
     the build, as the builder takes no keys for the whole map. Returns the keys, sorted"""
     listed, known, done = seen_listed(g), shader_keys(g), sh / 'partial-keys.txt'
@@ -2583,6 +2832,9 @@ def seen_keys(g, sh, logs):
     found = set()
     for log in logs:
         try: found.update(a or b for a, b in SHADER_MISSING.findall(log.read_text(errors='replace')))
+        except OSError: pass
+    for kept in lists:   # a whole line of 16 digits: a line a stopped host left half written is no key
+        try: found.update(re.findall(r'^[0-9a-f]{16}$', kept.read_text(errors='replace'), re.M))
         except OSError: pass
     played = shader_keys(g, GLSLC_PLAY_SOURCE)
     keys = sorted((listed | earlier | found | played) & known)
@@ -2709,8 +2961,17 @@ def stale_shaders(py, repo, env, lib_dirs, chain, g):
 def pack_libraries(sh, chain, pull=None):
     """Each finished library folder as one file, which the host and the tools read in place (shader_lib.py). pull False: nothing reads the iPhone's pulling libraries (ios_wants_pulling), which stay out of its
     image, so the IPA packs that file as it is and reuses it. A build that wants them again compiles them"""
-    shader_lib.pack(sh / 'cache' / f'b-{chain}', say)
-    shader_lib.pack(sh / 'ios' / f'b-{chain}', say, leave_out=pull is False)
+    def report(step):
+        last = 0.0
+        def on_progress(done, total, size):
+            nonlocal last
+            now = time.monotonic()
+            if done and done < total and now - last < 0.5: return
+            last = now
+            PROG.set(step=step, done=done, total=total, unit='files', note=amount(size, 'B') if size else '')
+        return on_progress
+    shader_lib.pack(sh / 'cache' / f'b-{chain}', say, on_progress=report('writing the Mac library image'))
+    shader_lib.pack(sh / 'ios' / f'b-{chain}', say, leave_out=pull is False, on_progress=report('writing the iOS library image'))
 
 
 def ios_gpus(gpu_option, g):
@@ -2742,7 +3003,16 @@ def build_shaders(py, repo, sh, xlate, env, logs, g, pkg_key=None, mac=False, se
     ios, log = sh / 'ios', logs / 'dmsh_build.log'
     PROG.stage('Mac shaders' if mac else 'iOS shaders')
     chain = chain_of(repo)
-    shader_cache.adopt(sh / 'cache/cas', shader_cache.chain_file(sh / 'cache', chain), say)
+    cache = sh / 'cache'
+    misplaced = sh / 'partial-cache.db'
+    if cache.is_file():
+        # A fresh partial build used this path as a database when the cache directory did not exist.
+        shader_cache.Store(cache, say).close()   # fold a stopped build's WAL into the file before moving it
+        cache.rename(misplaced)
+    cache.mkdir(parents=True, exist_ok=True)   # DMSH_CAS treats an absent path as a database file
+    if misplaced.is_file():
+        misplaced.rename(cache / shader_cache.LEGACY)
+    shader_cache.adopt(cache / 'cas', shader_cache.chain_file(cache, chain), say)
     out = sh / 'partial' if seen else sh / 'cache' if mac else ios
     libs, kf, kmac = out / f'b-{chain}', ios / f'b-{chain}.key', out / 'key' if seen else sh / f'mac-b-{chain}.key'
     pso_pairs, geo_pairs = (side_table(g, sh / 'pkg', n) for n in SPLIT_SIDE_TABLES)   # the split's copies are shader inputs too (vs_pad, dmsh_chain.mesh_pairs)
@@ -2773,7 +3043,7 @@ def build_shaders(py, repo, sh, xlate, env, logs, g, pkg_key=None, mac=False, se
     if ALLOW_OTHER_METAL: benv['DM_ALLOW_OTHER_METAL'] = '1'
     if mac: del benv['IOSOUT']   # dmsh_build.py builds the iOS libraries only with IOSOUT
     elif pull is False: benv['DMSH_IOS_PULL'] = '0'   # nothing in this app reads them
-    if seen: benv['DMSH_CAS'] = str(sh / 'cache')   # the full build's folder: this chain's file there
+    if seen: benv['DMSH_CAS'] = str(cache)   # the full build's folder: this chain's file there
     benv['DMSH_TABLE_MEMO'] = str(sh / 'cache')   # c1_guard.py / cb_extent.py keep each shader's answer there: a build that restores every shader makes the tables in seconds
     prog = sh / 'progress.json'; rmtree(prog); benv['DMSH_PROGRESS'] = str(prog)   # dmsh_build.py's progress (ShaderWatch)
     try: PROG.watch(ShaderWatch(prog))
@@ -2802,19 +3072,22 @@ def build_shaders(py, repo, sh, xlate, env, logs, g, pkg_key=None, mac=False, se
     if own := re.search(r'^note: (built with this Mac\'s compilers.*)$', t, re.M): say(own.group(1))
     if lost := re.search(r'^\[RED\] lost without failing: .*$', t, re.M): say(f'{lost.group(0)}; each is named in {log}, and the build goes on: a shader the game never reaches costs nothing')
     m, c = re.search(r'shaders (\d+): ok (\d+)', t), re.search(r'shader cache: hit (\d+)', t)
-    note = ''
+    note = summary = ''
     if m:
         total, ok = int(m.group(1)), int(m.group(2))
         failed = f'; {total - ok:,} failed, reasons at the end of {log}' if ok < total else ''
         note = f'{ok:,} of {total:,} shaders ready{failed}'
-        PROG.end(f'{ok:,} of {total:,} shaders ready' + (f' ({int(c.group(1)):,} from the cache)' if c else '') + failed)
-    else: PROG.end()
-    if not seen: shader_regressions(py, repo, sh / 'cache', chain, logs)   # before the key: a stopped build is checked again on the next run
+        summary = f'{ok:,} of {total:,} shaders ready' + (f' ({int(c.group(1)):,} from the cache)' if c else '') + failed
+    if not seen:
+        PROG.set(step='checking for regressions')
+        shader_regressions(py, repo, sh / 'cache', chain, logs)   # before the key: a stopped build is checked again on the next run
     if key:
         for k in (kmac,) if mac else (kf, kmac) if keep_mac else (kf,): k.write_text(f'{key}\n{note}\n')
     if not seen:   # last: a build that stopped before here keeps the old libraries and cache entries
+        PROG.set(step='pruning old libraries and cache entries')
         prune_stale_chains(sh, chain); prune_shader_cache(sh, chain); pack_libraries(sh, chain, None if mac else pull)
         if mac: rmtree(sh / 'partial')   # the whole library replaces a partial one; partial-keys.txt stays
+    PROG.end(summary)
     return out
 
 
@@ -2846,51 +3119,102 @@ def shader_regressions(py, repo, lib_dir, chain, logs):
                      'ALLOW_SHADER_REGRESSIONS = True (--allow-shader-regressions) packs the app without those shaders')
 
 
-def layer_shaders(py, repo, api, name, roots, sh, key, logs, env, mac, options=()):
+def layer_root_inputs(roots, dlc_roms, provisional):
+    """Fingerprint inputs for Vulkan/GL shader roots: pinned base roots (tree unless provisional) plus optional DLC roots."""
+    return [('stat' if provisional else 'tree', r) if rfs.isdir(r) else ('files', [r]) for r in roots] + dlc_inputs(dlc_roms)
+
+
+def layer_shaders(py, repo, api, name, roots, sh, key, logs, env, mac, options=(), mac_out=None):
     """What build_vk_shaders and build_gl_shaders share: dm/gfx/tools/<api>_shaders.py on the roots → sh/<api>/ for the Mac and, unless mac (a Mac-only build), sh/ios/<api>/ for the iPhone.
-    Returns the folder the host (DM_MSL_DIR) or build_ipa.sh (MSL_IOS) takes the libraries from. key: the inputs' fingerprint (None never reuses). The iOS libraries' key is sh/ios/<api>.key,
-    the Mac's sh/<api>.key, which an iOS build writes too (it builds both), so a Mac-only build is reused after either; an iOS build after a Mac-only one translates again.
+    Returns the folder the host (DM_MSL_DIR) or build_ipa.sh (MSL_IOS) takes the libraries from. key: the inputs' fingerprint (None never reuses). Each target checks only its own
+    stamp and complete outputs (<api>_shaders.metallib and <api>_shaders.tsv; sh/<api>.key for the Mac, sh/ios/<api>.key for iOS), and a dual-target run verifies both expected
+    target outputs before publishing each stamp.
     Otherwise the old output is deleted first, so a failed run leaves nothing for build_ipa.sh or the host to pick up; the translator's temporary files go to WORK (on the NSP folder's volume)"""
-    ios = sh / 'ios'; out = sh if mac else ios
-    kf, kmac, lib, log = ios / f'{api}.key', sh / f'{api}.key', out / api / f'{api}_shaders.metallib', logs / f'{api}_shaders.log'
-    note = next((n for k in ((kmac, kf) if mac else (kf,)) if (n := reused(k, key)) is not None), None) if key else None
-    if lib.is_file() and note is not None:
+    mac_out = mac_out or sh
+    ios = sh / 'ios'; out = mac_out if mac else ios
+    kf, kmac, log = ios / f'{api}.key', mac_out / f'{api}.key', logs / f'{api}_shaders.log'
+    def products(d):
+        return (d / api / f'{api}_shaders.metallib', d / api / f'{api}_shaders.tsv')
+    def complete(d):
+        return all(p.is_file() for p in products(d))
+    def require_complete(d, target):
+        missing = [p.name for p in products(d) if not p.is_file()]
+        if missing: raise BuildError(f'no {target} {name} shader output ({", ".join(missing)}) in {d / api}')
+    stamp = kmac if mac else kf
+    note = reused(stamp, key) if key and complete(out) else None
+    if note is not None:
         PROG.end(f'{note}, reused (inputs unchanged)'); return out
     PROG.set(step='translating')
-    rmtree(kmac); rmtree(sh / api)
+    rmtree(kmac); rmtree(mac_out / api)
     if not mac: rmtree(kf); rmtree(ios / api)
-    run([py, repo / f'dm/gfx/tools/{api}_shaders.py', *roots, sh, *options] + ([] if mac else ['--ios', ios]), log, env=dict(env, TMPDIR=env['WORK']))
-    if not lib.is_file(): raise BuildError(f'no {"Mac" if mac else "iOS"} {name} shader library in {lib.parent}')
-    m = re.search(r'macosx: (\d+)' if mac else r'iphoneos: (\d+)', log.read_text(errors='replace'))
-    note = f'{int(m.group(1)):,} shaders for the Mac' + ('' if mac else ' and iOS') if m else ''
+    run([py, repo / f'dm/gfx/tools/{api}_shaders.py', *roots, mac_out, *options] + ([] if mac else ['--ios', ios]), log, env=dict(env, TMPDIR=env['WORK']))
+    if mac:
+        require_complete(mac_out, 'Mac')
+    else:
+        require_complete(ios, 'iOS')
+        require_complete(mac_out, 'Mac')
+    log_text = log.read_text(errors='replace')
+    m_mac = re.search(r'macosx: (\d+)', log_text)
+    m_ios = re.search(r'iphoneos: (\d+)', log_text)
+    mac_note = f'{int(m_mac.group(1)):,} shaders for the Mac' if m_mac else ''
+    ios_note = f'{int(m_ios.group(1)):,} shaders for the Mac and iOS' if m_ios else ''
+    note = mac_note if mac else ios_note
     if key:
-        for k in (kmac,) if mac else (kf, kmac): k.write_text(f'{key}\n{note}\n')
+        kmac.write_text(f'{key}\n{mac_note}\n')
+        if not mac: kf.write_text(f'{key}\n{ios_note}\n')
     PROG.end(note)
     return out
 
 
-def build_vk_shaders(py, repo, roots, sh, env, logs, g, reuse=True, mac=False, provisional=False):
-    """A Vulkan game's SPIR-V shaders (roots: the RomFS, NSO, and a run-time capture folder) → one Metal library each for the Mac (sh/vk/) and the iPhone (sh/ios/vk/, what build_ipa.sh takes from MSL_IOS;
-    not with mac), replacing the NVN split and chain build (layer_shaders). Reused when the roots (paths and sizes), the tools, the profile and the compilers are as at the last successful run (reuse False: never)"""
+def build_vk_shaders(py, repo, roots, sh, env, logs, g, reuse=True, mac=False, provisional=False, dlc_roms=()):
+    """A Vulkan game's SPIR-V shaders (roots: the RomFS, NSO, and a run-time capture folder; dlc_roms: optional DLC roots) → one Metal library each for the Mac (sh/vk/) and the iPhone (sh/ios/vk/, what build_ipa.sh takes from MSL_IOS;
+    not with mac), replacing the NVN split and chain build (layer_shaders). Reused when the roots (paths and sizes), DLC roots, the tools, the profile and the compilers are as at the last successful run (reuse False: never)"""
     PROG.stage('Vulkan shaders', step='checking the inputs')
-    key = fingerprint(*[('stat' if provisional else 'tree', r) if rfs.isdir(r) else ('files', [r]) for r in roots],
+    key = fingerprint(*layer_root_inputs(roots, dlc_roms, provisional),
                       ('files', tool_files(repo)), ('files', profile_files(g)), *toolchain(repo, env), env=env) if reuse else None
-    return layer_shaders(py, repo, 'vk', 'Vulkan', roots, sh, key, logs, env, mac)
+    return layer_shaders(py, repo, 'vk', 'Vulkan', [*roots, *dlc_roms], sh, key, logs, env, mac)
 
 
 def require_glslang(env):
     if not shutil.which('glslangValidator', path=env['PATH']): raise BuildError('glslangValidator not found (brew install glslang): it compiles an OpenGL game\'s GLSL shaders')
 
 
-def build_gl_shaders(py, repo, roots, sh, env, logs, g, reuse=True, mac=False, provisional=False, fixed=False):
-    """An OpenGL game's GLSL sources (roots: the RomFS, main, a run-time capture folder) → one Metal library each for the Mac (sh/gl/) and the iPhone (sh/ios/gl/, what build_ipa.sh takes from MSL_IOS;
+def build_gl_shaders(py, repo, roots, sh, env, logs, g, reuse=True, mac=False, provisional=False, fixed=False, mac_out=None, dlc_roms=()):
+    """An OpenGL game's GLSL sources (roots: the RomFS, main, a run-time capture folder; dlc_roms: optional DLC roots) → one Metal library each for the Mac (sh/gl/) and the iPhone (sh/ios/gl/, what build_ipa.sh takes from MSL_IOS;
     not with mac), replacing the NVN split and chain build, as build_vk_shaders does for a Vulkan game; glslang (glslangValidator) compiles the GLSL to SPIR-V for spirv-cross"""
     PROG.stage('GL shaders', step='checking the inputs')
     if not fixed: require_glslang(env)
     compiler = ('option', 'fixed-function') if fixed else ('cmd', ['glslangValidator', '--version'])
-    key = fingerprint(*[('stat' if provisional else 'tree', r) if Path(r).is_dir() else ('files', [r]) for r in roots], ('files', tool_files(repo)), ('files', profile_files(g)), *toolchain(repo, env),
+    key = fingerprint(*layer_root_inputs(roots, dlc_roms, provisional), ('files', tool_files(repo)), ('files', profile_files(g)), *toolchain(repo, env),
                       compiler, env=env) if reuse else None
-    return layer_shaders(py, repo, 'gl', 'GL', roots, sh, key, logs, env, mac, ('--fixed-function',) if fixed else ())
+    return layer_shaders(py, repo, 'gl', 'GL', [*roots, *dlc_roms], sh, key, logs, env, mac, ('--fixed-function',) if fixed else (), mac_out=mac_out)
+
+
+class PsoLines:
+    """Progress of pso_offline.py (both mac_pso and IpaWatch): batch counts ("<arch>: batch i/n: ready (...)", counting ready lines because compute batches finish in any order),
+    "<arch>: merging n batches" (metal-pack), and "prewarm: ..." steps. Returns True when the line was handled"""
+    BATCH = re.compile(r'^pso_offline: (\w+): batch \d+/(\d+): (ready)?')
+    MERGE = re.compile(r'^pso_offline: (\w+): merging (\d+) batches')
+
+    def __init__(self): self.ready, self.started = collections.Counter(), set()
+
+    def __call__(self, line):
+        if m := self.BATCH.match(line):
+            arch, total = m.group(1), int(m.group(2))
+            if m.group(3):
+                self.ready[arch] += 1; self.started.add(arch)
+                PROG.set(step=f'{arch}: compiling', done=self.ready[arch], total=total, unit='batches')
+            elif arch not in self.started:
+                self.started.add(arch)
+                PROG.set(step=f'{arch}: compiling', done=self.ready[arch], total=total, unit='batches')
+            return True
+        if m := self.MERGE.match(line):
+            PROG.set(step=f'{m.group(1)}: merging {int(m.group(2)):,} batches (metal-pack)')
+            return True
+        if line.startswith('pso_offline: prewarm:'):
+            PROG.set(step=line.removeprefix('pso_offline: ').strip())
+            return True
+        return False
 
 
 class IpaWatch:
@@ -2903,6 +3227,7 @@ class IpaWatch:
         self.ios, self.o, self.part = repo / 'dm/ios', w / 'build/ios/pkg', out_ipa.with_name(out_ipa.name + '.partial')
         self.last = out_ipa.stat().st_size if out_ipa.is_file() else None   # the last IPA's size: the expected size of the new archive
         self.kept = 0
+        self.pso = PsoLines()
         self.state, self.t, self.off, self.compiled, self.what, self.total, self.most, self.lock = None, 0, 0, 0, '', None, 0, threading.Lock()
 
     def line(self, line):   # a line of build_ipa.sh's output
@@ -2911,6 +3236,7 @@ class IpaWatch:
             if s.startswith('generate Gen/'): self.state = 'gen'; PROG.set(step='generating sources')
             elif s.startswith('[RED] pipeline archive:'): say(s)   # the build goes on without one, and only this says so
             elif s.startswith('pipeline archive for'): PROG.set(step='pipeline archive (metal-tt)')
+            elif self.pso(s): pass
             elif s.startswith('xcodebuild'):
                 units = len(os.listdir(self.ios / 'Gen/src')) + 2 + sum(1 for p in (self.ios / 'Sources').iterdir() if p.suffix in ('.c', '.m'))   # + Gen/main/main.c and Gen/embed.S
                 self.state, self.t = 'xcode', time.time(); PROG.set(step='xcodebuild', done=0, total=units, unit='files', est=True)   # an incremental build compiles fewer
@@ -2988,7 +3314,7 @@ def mac_host(py, repo, work, env, logs, g):
     return host, font
 
 
-def mac_run(work, game, patched, host, font, msl, aoc, gfx, lang, env, logs, g, env_file='', partial=False, parts=None, jit=False, nvn_runtime=None, romfs=None):
+def mac_run(work, game, patched, host, font, msl, aoc, gfx, lang, env, logs, g, env_file='', partial=False, parts=None, jit=False, nvn_runtime=None, romfs=None, program_index=None):
     """The command that runs the game in a window with sound after a Mac-only build (PLATFORM 'mac'; docs/development.md, Build by hand (Mac), step 5): its save and temporary storage in
     <id>_build/run (kept from run to run), the extracted RomFS, the Mac shader libraries (msl), the DLC, the profile's shader map (a host outside dm/host does not find it beside itself;
     c1_full.tsv and cb_extent.tsv are read beside it), the game language, and the switches of an environment file (DM_ENV_FILE / --env-file). partial (--seen-shaders): the pipeline bases go into an
@@ -3005,7 +3331,8 @@ def mac_run(work, game, patched, host, font, msl, aoc, gfx, lang, env, logs, g, 
         renv['DM_PSO_ARCHIVE'] = rd / 'pso_archive_partial'
         (rd / 'pso_archive_partial/prebuilt.tsv').unlink(missing_ok=True)   # the keys may have grown: the prebuild walks the pairs again, and skips what the archive holds
     if jit: (game / 'jit_capture/play').mkdir(parents=True, exist_ok=True); renv['DM_JIT_CAPTURE'] = game / 'jit_capture/play'
-    if PROGRAM_INDEX and g.get('program_of', ''): renv['DM_PROGRAM'] = PROGRAM_INDEX   # the host over the application's programs runs this one (main.c dm_game_cur)
+    prog_idx = PROGRAM_INDEX if program_index is None else program_index
+    if prog_idx and (program_index is not None or g.get('program_of', '')): renv['DM_PROGRAM'] = prog_idx   # the host over the application's programs runs this one (main.c dm_game_cur)
     renv.update(DM_LANG=lang, DM_WINDOW=1, DM_AUDIO=1)
     if env_file: renv.update(env_file_pairs(env_file))
     if gfx == 'nvn' and g.table('shader_pairs.tsv').is_file():
@@ -3019,39 +3346,82 @@ def mac_run(work, game, patched, host, font, msl, aoc, gfx, lang, env, logs, g, 
         if g.get('depth_mode', 'gl') == 'zero': penv['DM_PSO_PREBUILD_DEPTH'] = 'zero'   # a game that sets the near = 0 depth mode (the profile says so: the host learns it only at run time, which for a provisional or derived profile includes its check boots)
         run([host], logs / 'pso_prebuild.log', env=penv, cwd=rd)
         PROG.end()
+    if partial: renv['DM_NVN_MISSING_KEYS'] = rd / 'shader_missing.txt'   # for the play runs only, so set after the prebuild above: what that tool loads is not what the game asked for
     q = lambda v: shlex.quote(str(v))
     if parts is not None: parts.update(env=renv, host=host, arg=patched, cwd=rd)
     return f'cd {q(rd)} && ' + ' '.join(f'{k}={q(v)}' for k, v in renv.items()) + f' {q(host)} {q(patched)}' + (f' 2>&1 | tee {q(rd / "host.log")}' if partial else '')
 
 
-def other_programs(args, g, first=None):
-    """A game of several programs (the profile's key programs, Super Mario 3D All-Stars) is one package: its first program's build packs each of the others, each from its own profile into its own
-    build folder (main with in_programs: it stops where the package would be made, and returns what the package takes). {program index: that}, empty for a game of one program"""
+def merge_games_dir(env, dirs):
+    """Ensure every profile root in dirs is on both os.environ and env DM_GAMES_DIR (and keep DM_GAMES_FIRST in sync)."""
+    have = [d for d in env.get('DM_GAMES_DIR', '').split(os.pathsep) if d]
+    for d in [str(p) for p in dirs if p] + [d for d in os.environ.get('DM_GAMES_DIR', '').split(os.pathsep) if d]:
+        if d not in have: have.append(d)
+    if have: os.environ['DM_GAMES_DIR'] = env['DM_GAMES_DIR'] = os.pathsep.join(have)
+    if os.environ.get('DM_GAMES_FIRST'): env['DM_GAMES_FIRST'] = os.environ['DM_GAMES_FIRST']
+
+
+def finalize_provisional_programs(g, runs, provisional):
+    """Record discovered AArch64 sibling programs in program 0's provisional game.tsv before building the combined multi-program host."""
+    if not (provisional and runs) or g.get('programs', ''): return g
+    val = ' '.join(f'{n}={runs[n].get("profile") or format(runs[n]["tid"], "016X")}' for n in sorted(runs))
+    g = set_keys(g, {'programs': (val, 'discovered AArch64 programs of this multi-program application')}, 'Programs')
+    say(f'provisional profile programs: {val}')
+    return g
+
+
+def other_programs(args, g, first=None, *, provisional=False, discovered=None, app=None, base_version=0):
+    """A game of several programs (the profile's key programs, Super Mario 3D All-Stars, or sibling programs discovered for a provisional profile) is one package: its first program's
+    build packs each of the others, each from its own profile into its own build folder (main with in_programs: it stops where the package would be made, and returns what the package takes).
+    {program index: that}, empty for a game of one program"""
     global PROGRAM_INDEX
-    runs = {}
-    for n, _ in g.pairs('programs') if g.get('programs', '') and not getattr(args, 'in_programs', None) else ():
-        say(f'==== program {n}')
-        sub = types.SimpleNamespace(**vars(args)); sub.program, sub.in_programs = int(n), first or {}
-        sub.glslc_play = None   # captures were supplied for the selected program
-        runs[int(n)] = main(sub)
-    PROGRAM_INDEX = 0
+    if getattr(args, 'in_programs', None) is not None: return {}
+    if g.get('programs', ''):
+        targets, auto = [(int(n), None) for n, _ in g.pairs('programs')], False
+    elif provisional and discovered:
+        targets, auto = [(int(n), info) for n, info in sorted(discovered.items())], True
+    else:
+        return {}
+    runs, saved = {}, PROGRAM_INDEX
+    try:
+        for n, info in targets:
+            say(f'==== program {n}')
+            sub = types.SimpleNamespace(**vars(args))
+            sub.program = n
+            sub.in_programs = dict(first or {}, program_of=app if app is not None else g.title_id)
+            sub.glslc_play = None   # captures were supplied for the selected program
+            if provisional: sub.profile_out = str(g.dir.parent)   # share program 0's profile root so one DM_GAMES_DIR reaches all provisional profiles
+            if auto and info and info.get('in_base') and not info.get('in_update'):
+                sub.package = f'v{base_version}'   # sibling exists only in the base NSP (not patched by the update)
+            try: runs[n] = main(sub)
+            except Arm32Error as e:
+                if not auto: raise
+                say(f'program {n}: skipping 32-bit ARM sibling ({e})')
+    finally:
+        PROGRAM_INDEX = saved
     return runs
+
+
+def write_mac_programs(first, runs):
+    """Write programs.tsv beside program 0's run folder for DM_PROGRAMS (hle_oe.c) from finalized program 0 and child mac_run parts. Returns the file, or None for a game of one program"""
+    if not runs: return None
+    all_runs = {0: first, **runs}
+    tsv = Path(first['cwd']).parent / 'programs.tsv'
+    rows = ['# The programs of this multi-program application on the Mac (build_ipa_from_nsp.py): index, the host (exe), rewritten modules (arg), run folder (cwd) and environment; DM_PROGRAMS names this file (hle_oe.c)']
+    for n, r in all_runs.items():
+        kv = {k: v for k, v in r['env'].items() if k not in ('DM_WINDOW', 'DM_AUDIO')}   # the run command's own switches, which every program inherits
+        kv['DM_SAVE'] = first['env']['DM_SAVE']
+        if n: kv['DM_PROGRAM'] = n
+        rows.append('\t'.join([str(n), f'exe={first["host"]}', f'arg={r["arg"]}', f'cwd={r["cwd"]}'] + [f'{k}={v}' for k, v in kv.items()]))
+    tsv.write_text('\n'.join(rows) + '\n')
+    return tsv
 
 
 def mac_programs(args, g, first):
     """A Mac build of a game of several programs writes programs.tsv, which DM_PROGRAMS names: one host over all of them (game.py header_multi), and oe::ExecuteProgram ends the running program and
     starts the host again on the named one (hle_oe.c). As on Horizon the programs share one save. Returns the file, or None for a game of one program"""
     runs = other_programs(args, g, first)
-    if not runs: return None
-    runs = {0: first, **runs}
-    tsv = Path(first['cwd']).parent / 'programs.tsv'
-    rows = ['# The programs of this multi-program application on the Mac (build_ipa_from_nsp.py): index, the host (exe), rewritten modules (arg), run folder (cwd) and environment; DM_PROGRAMS names this file (hle_oe.c)']
-    for n, r in runs.items():
-        kv = {k: v for k, v in r['env'].items() if k not in ('DM_WINDOW', 'DM_AUDIO')}   # the run command's own switches, which every program inherits
-        kv['DM_SAVE'] = first['env']['DM_SAVE']
-        rows.append('\t'.join([str(n), f'exe={first["host"]}', f'arg={r["arg"]}', f'cwd={r["cwd"]}'] + [f'{k}={v}' for k, v in kv.items()]))
-    tsv.write_text('\n'.join(rows) + '\n')
-    return tsv
+    return write_mac_programs(first, runs)
 
 
 MTL_ARCH_M = '''#import <Metal/Metal.h>
@@ -3071,11 +3441,16 @@ def mac_gpu_arch(work, env, logs):
     return arch
 
 
-def mac_pso(py, repo, work, lib, g, gpus, env, logs):
-    """PLATFORM 'mac-app', an NVN game with shader pairs: its pipeline archive made offline for this Mac's GPU (dm/gfx/tools/pso_offline.py --platform macos, metal-tt), which the app carries as
-    Resources/pso and the launcher hands to the host as DM_PSO_BUNDLE, as the iOS app does (docs/development.md, The pipeline archive made offline): the app's first start builds no base,
-    and the bases (about 615 MB for Breath of the Wild) do not go into the player's ~/Library/Application Support. gpus: --gpu / PSO_GPUS (empty: this Mac's GPU; none: no archive, the app
-    builds the bases on its first start). Made again only when its inputs change (pso_offline.py's key). Returns the folder, or None"""
+def has_mtl4a(pso):
+    """Whether a pipeline archive folder holds any .mtl4a file (pair/compute archive or prewarm archive), ignoring AppleDouble files."""
+    return pso.is_dir() and any(f.is_file() and not f.name.startswith('._') for f in pso.glob('*.mtl4a'))
+
+
+def mac_pso(py, repo, work, lib, g, gpus, env, logs, host=None):
+    """PLATFORM 'mac-app', an NVN game with shader pairs: its pipeline archive and optional prewarm pipelines made offline for this Mac's GPU (dm/gfx/tools/pso_offline.py --platform macos,
+    with --prewarm-host when --prebake is on), which the app carries as Resources/pso and the launcher hands to the host as DM_PSO_BUNDLE, as the iOS app does (docs/development.md,
+    The pipeline archive made offline). gpus: --gpu / PSO_GPUS (empty: this Mac's GPU; none: no archive, the app builds what it needs on its first start). Made again only when its inputs
+    change (pso_offline.py's cache). Returns the folder when it holds at least one .mtl4a archive with prebuilt.tsv, or None"""
     if gpus == 'none': say('pipeline archive: none (--gpu none): the app builds the pipeline bases on its first start'); return None
     if gpus and not re.fullmatch(r'(applegpu_)?g\w+(,(applegpu_)?g\w+)*', gpus): raise BuildError(f'--gpu / PSO_GPUS takes GPU architectures such as g14s, or none: {gpus}')
     try: here = mac_gpu_arch(work, env, logs)
@@ -3090,120 +3465,22 @@ def mac_pso(py, repo, work, lib, g, gpus, env, logs):
     cmd = [py, repo / 'dm/gfx/tools/pso_offline.py', '--game', g.id, '--msl', lib, '--out', out, '--work', work / 'pso/mac-work', '--gpu', arch, '--platform', 'macos']
     if not g.table('pso_pairs.tsv').is_file() and (work / 'shader/pso_pairs.tsv').is_file():   # the split's copy, as the app gets it (--pso-pairs)
         cmd += ['--pairs', g.table('shader_pairs.tsv'), '--pairs', work / 'shader/pso_pairs.tsv']
-    if run(cmd, logs / 'pso_offline_mac.log', env=env, fatal=False):   # an optimization: the app builds the bases on its first start without it
+    if host: cmd += ['--prewarm-host', host]
+    pso_lines = PsoLines()
+    def pso_line(ln):
+        if ln.startswith('[RED]'): say(ln)
+        else: pso_lines(ln)
+    if run(cmd, logs / 'pso_offline_mac.log', env=env, fatal=False, on_line=pso_line):   # an optimization: the app builds the bases on its first start without it
         shutil.rmtree(out, ignore_errors=True)
         PROG.end('failed, the app is packed without one', warn=True)
         say(f'[RED] pipeline archive: pso_offline.py failed (see {logs / "pso_offline_mac.log"}); the app is packed without one and builds its pipeline bases on its first start (--gpu none skips this step)')
         return None
-    if not any(out.glob('*.mtl4a')):   # no pair (a header-only table, #338), or every eligible pair declares function constants (the host specializes them on the device, rest_pairs.tsv)
-        PROG.end('no base to bundle'); say('pipeline archive: none (no shader pair, or every eligible one has function constants): the app builds what it needs on its first start'); return None
-    PROG.end(f'{arch}, {amount(sum(f.stat().st_size for f in out.iterdir() if f.is_file() and "-prewarm-" not in f.name), "B")}')   # the archives, not the prewarm pipelines an earlier build linked there
+    if not has_mtl4a(out) or not (out / 'prebuilt.tsv').is_file():
+        PROG.end('no archive to bundle')
+        say('pipeline archive: none (no shader pair, compute shader, or prewarm pipeline to bundle): the app builds what it needs on its first start')
+        return None
+    PROG.end(f'{arch}, {amount(sum(f.stat().st_size for f in out.iterdir() if f.is_file() and not f.name.startswith("._")), "B")}')
     return out
-
-
-def drop_prewarm(pso):   # the prewarm pipelines in an archive folder, with their indexes (.keys) and stamp: an earlier build's, when this one makes none
-    for old in pso.glob('*-prewarm-*'): old.unlink()
-    (pso / 'prewarm.tsv').unlink(missing_ok=True)
-
-
-def mac_prebake(py, repo, work, msl, g, host, pso, env, logs):
-    """PLATFORM 'mac-app', --prebake (on by default): what the app's first start would still build after the pipeline archive, made here and added to the archive folder pso, so the first
-    start finds it (nvn_mtl.m pso_bundle_open_prewarm) instead of building it before the first frame: the prewarm list's pipelines (pso_manifest.tsv: the R rows' bases with a vertex layout,
-    the M rows' mesh pipelines) and the pairs pso_offline.py left to the device (rest_pairs.tsv). They need the descriptor the host builds from a row's pipeline key and the shader's reflection,
-    which only the host knows, so the host makes them itself: its prebuild tool in the bundle form (DM_PSO_PREBUILD=tool with DM_PSO_PREBUILD_OUT; depth mode from the profile's depth_mode,
-    as pso_offline.py gets it). The tool captures into a work folder, one file per flush period (Metal's serializer store fills past about 2,000 captures), which is kept for the next build only
-    while the inputs are the same (an interrupted run goes on from there), and puts <GPU>-prewarm-<NN>.mtl4a, each with its index <GPU>-prewarm-<NN>.keys, and prewarm.tsv in the output folder;
-    those are linked into pso, where pack_app.py takes them. The files are for this Mac's GPU, so for every other GPU --gpu names (pso holds a pair archive for it) the tool also writes each
-    period as a pipelines script (prewarm-<NN>.mtl4-json), which other_gpu_prewarm compiles with metal-tt into <GPU>-prewarm-<NN>.mtl4a. Made again only when its key changes (the list,
-    the libraries, the pair archive, the GPUs, the host, the depth mode, the system build). Returns pso; an optimization, so a failure leaves the app without them (it builds them on its first start)"""
-    if pso is None: return pso   # no pair archive (none for this Mac's GPU, or --gpu none): the app has no bundle to put them in
-    manifest = g.table('pso_manifest.tsv')
-    text = manifest.read_text() if manifest.is_file() else ''
-    rows = sum(ln.startswith(('R\t', 'M\t')) for ln in text.splitlines())
-    def none(why):   # the app goes without them: none of an earlier build's stay in pso (pso_offline.py leaves an architecture's there)
-        say(why); drop_prewarm(pso); return pso
-    if not rows: return none('prewarm pipelines: none (the profile\'s pso_manifest.tsv has no R or M rows)')
-    try: arch = mac_gpu_arch(work, env, logs)
-    except BuildError as e: return none(f'[RED] prewarm pipelines: {e}; the app builds them on its first start')
-    if not (pso / f'{arch}.mtl4a').is_file(): return none(f'prewarm pipelines: the pipeline archive is not for this Mac\'s GPU ({arch}): the app builds them on its first start')
-    PROG.add(1); PROG.stage('Prewarm pipelines', step=f'{arch}, {rows:,} rows (host, minutes to hours when its inputs changed)')
-    out, stage = work / 'pso/mac-prewarm', work / 'pso/mac-prewarm-work'
-    zero = g.get('depth_mode', 'gl') == 'zero'
-    others = sorted(f.stem for f in pso.glob('applegpu_*.mtl4a') if '-prewarm-' not in f.name and f.stem != arch)   # the other GPUs --gpu named: their pipelines come from the scripts (metal-tt)
-    lib = shader_lib.view(msl / f'b-{chain_of(repo)}')   # the full build packs this folder: its input stamp remains inside the image
-    digest = hashlib.sha256()
-    for part in (arch, chain_of(repo), 'zero' if zero else 'gl', text, Path(host).read_bytes() if Path(host).is_file() else str(host),
-                 (lib / 'inputs.tsv').read_text() if (lib / 'inputs.tsv').is_file() else '',
-                 (work / f'pso/mac-work/key.{arch}').read_text() if (work / f'pso/mac-work/key.{arch}').is_file() else '',
-                 subprocess.run(['sysctl', '-n', 'kern.osversion'], capture_output=True, text=True).stdout):
-        digest.update(part if isinstance(part, bytes) else str(part).encode()); digest.update(b'\0')
-    key = digest.hexdigest()   # this Mac's files; the other GPUs' are keyed by it and their list (keyf)
-    keyf, stage_key = work / 'pso/mac-prewarm.key', stage / 'key'
-    if keyf.is_file() and keyf.read_text().split() == [key, ','.join(others) or '-'] and list(out.glob(f'{arch}-prewarm-*.mtl4a')):
-        say('prewarm pipelines: reused (inputs unchanged)')
-    else:
-        keyf.unlink(missing_ok=True)
-        if not (out.is_dir() and (out / 'key').is_file() and (out / 'key').read_text().strip() == key and list(out.glob(f'{arch}-prewarm-*.mtl4a'))):   # this Mac's files are not this key's
-            shutil.rmtree(out, ignore_errors=True)
-            if not (stage_key.is_file() and stage_key.read_text().strip() == key): shutil.rmtree(stage, ignore_errors=True)   # an unfinished run of other inputs: its captures are not this build's
-            stage.mkdir(parents=True, exist_ok=True); stage_key.write_text(key + '\n')
-            renv = dict(env, DM_PSO_PREBUILD='tool', DM_PSO_ARCHIVE=str(stage), DM_PSO_PREBUILD_OUT=str(out), DM_PSO_BUNDLE=str(pso), DM_PSO_MANIFEST=str(manifest),
-                        DM_MSL_DIR=str(msl), DM_NVN_SHMAP=str(g.table('shader_map.tsv')))
-            if zero: renv['DM_PSO_PREBUILD_DEPTH'] = 'zero'
-            if not g.table('pso_pairs.tsv').is_file() and (work / 'shader/pso_pairs.tsv').is_file(): renv['DM_PSO_PAIRS'] = str(work / 'shader/pso_pairs.tsv')
-            for k in ('DM_WINDOW', 'DM_GPU_CAPTURE', 'MTL_CAPTURE_ENABLED', 'DM_SAVE', 'DM_PSO_USER', 'DM_PSO_PREBUILD_WARM'): renv.pop(k, None)   # the profile's list alone, not a player's
-            if run([host], logs / 'pso_prewarm_mac.log', env=renv, fatal=False) or not list(out.glob(f'{arch}-prewarm-*.mtl4a')):
-                shutil.rmtree(out, ignore_errors=True)
-                PROG.end('failed, the app is packed without them', warn=True)
-                say(f'[RED] prewarm pipelines: the host\'s prebuild tool failed (see {logs / "pso_prewarm_mac.log"}); the app is packed without them and builds them on its first start (--no-prebake skips this step)')
-                drop_prewarm(pso)
-                return pso
-            (out / 'key').write_text(key + '\n')
-            shutil.rmtree(stage, ignore_errors=True)   # the work folder is kept only while a run is unfinished
-        if other_gpu_prewarm(repo, out, arch, others, logs, lib if lib.is_dir() else lib.with_name(lib.name + '.img'), env):
-            keyf.write_text(f'{key} {",".join(others) or "-"}\n')   # a period left out for a GPU: no key, so the next build tries those GPUs again (this Mac's files are kept)
-    sys.path.insert(0, str(repo / 'dm/gfx/tools')); import pso_offline as po
-    po.publish_prewarm(pso, {f.name: f for f in out.iterdir() if f.suffix in ('.mtl4a', '.keys', '.tsv')})   # the scripts and their libraries stay in the work folder
-    PROG.end(f'{len(list(out.glob("*.mtl4a")))} files, {amount(sum(f.stat().st_size for f in out.glob("*.mtl4a")), "B")}')
-    return pso
-
-
-def prewarm_script_libraries(out, scripts, lib_dir, po):
-    """The libraries the prewarm pipelines scripts name, as files for metal-tt, in out/libraries, and the scripts' paths pointed at them (po.script_libraries, which the IPA's prewarm files
-    share: pso_offline.py --prewarm-host). po: the pso_offline module. Returns that folder, or raises BuildError naming a library not found"""
-    try: return po.script_libraries(scripts, lib_dir, out / 'libraries')
-    except LookupError as e: raise BuildError(str(e)) from e
-
-
-def other_gpu_prewarm(repo, out, arch, others, logs, lib_dir, env):
-    """The prewarm pipelines for the GPUs --gpu named besides this Mac's (arch): the host's tool wrote each flush period also as a pipelines script (prewarm-<NN>.mtl4-json, prewarm_script), which
-    metal-tt builds for each of them as <GPU>-prewarm-<NN>.mtl4a, as pso_offline.py builds the pairs' bases, with this Mac's index of the same period (the same pipelines, so the same keys).
-    A period whose build fails for a GPU is left out for it (that GPU's first start builds those pipelines), the others are kept. Returns False when one was left out, so the stage keeps
-    no key and the next build tries again"""
-    for old in out.glob('applegpu_*-prewarm-*'):   # the other GPUs' files of an earlier build, made again here
-        if not old.name.startswith(f'{arch}-'): old.unlink()
-    if not others: return True
-    scripts = sorted(out.glob('prewarm-*.mtl4-json'))
-    if not scripts: say(f'[RED] prewarm pipelines for {", ".join(others)}: the host wrote no pipelines script; those GPUs build them on their first start'); return False
-    sys.path.insert(0, str(repo / 'dm/gfx/tools')); import pso_offline as po
-    osmin = po.os_min_default('macos')
-    try: prewarm_script_libraries(out, scripts, lib_dir, po)
-    except (BuildError, OSError) as e: say(f'[RED] prewarm pipelines for {", ".join(others)}: {e}; those GPUs build them on their first start'); return False
-    ok = True
-    for gpu in others:
-        made, failed = [], []
-        for js in scripts:
-            dst = out / f'{gpu}-{js.stem}.mtl4a'
-            if run(['xcrun', '-sdk', 'macosx', 'metal-tt', '-arch', gpu, '-macos-version-min', osmin, js, '-o', dst], logs / f'pso_prewarm_{gpu}_{js.stem}.log', env=env, fatal=False):
-                dst.unlink(missing_ok=True); failed.append(js.name); ok = False; continue
-            made.append(dst)
-            keys = out / f'{arch}-{js.stem}.keys'
-            if keys.is_file():   # with its index, the file leads the lookup for them over a device file an earlier build left (pso_bundle_open_prewarm)
-                k = dst.with_suffix('.keys'); k.unlink(missing_ok=True); os.link(keys, k)
-        if failed: say(f'[RED] prewarm pipelines for {gpu}: metal-tt failed on {", ".join(failed)} (see {logs}/pso_prewarm_{gpu}_*.log); that GPU builds those periods\' pipelines on its first start')
-        if made: say(f'prewarm pipelines for {gpu}: {len(made)} of {len(scripts)} files, {amount(sum(f.stat().st_size for f in made), "B")} (metal-tt)')
-    shutil.rmtree(out / 'libraries', ignore_errors=True)
-    return ok
 
 
 def mac_app_name(name):   # the app's file name: the game name with the characters Finder shows otherwise (':' and '/') as ' - '
@@ -3213,13 +3490,11 @@ def mac_app_name(name):   # the app's file name: the game name with the characte
 def mac_app(py, repo, out, app, work, game, patched, host, font, msl, aoc, gfx, lang, g, name, version, bundle_id, icon, sign, env, logs, env_file='', gpus='', programs=None, control=None, prebake=False, runtime_python=None, romfs=None):
     """The last stage of PLATFORM 'mac-app': pack the Mac app (dm/mac/pack_app.py) from what a Mac-only build made: the Mac host and font (mac_host), the packed version's RomFS and rewritten
     modules, the Mac shader libraries (msl: <shader>/cache, whose b-<chain> goes in, or a Vulkan or GL game's <shader>, whose vk / gl goes in), the DLC, the profile's tables (with the shader pairs
-    the pipeline prebuild reads), the pipeline archive made offline for this Mac (mac_pso; gpus: --gpu / PSO_GPUS), the launcher settings and an environment file.
+    the pipeline prebuild reads), the pipeline archive made offline for this Mac (mac_pso; gpus: --gpu / PSO_GPUS; prebake: --prewarm-host), the launcher settings and an environment file.
     The save and the log go to the player's Library, keyed by the folder's title ID (app); a new app replaces the old one only when it is complete. programs: a game of several programs, the others' files
     (other_programs), which go in beside the first's as one app. control: the control.nacp that lists the game's languages (languages_control), by default the packed version's"""
     lib = msl / (f'b-{chain_of(repo)}' if gfx == 'nvn' else 'vk' if gfx == 'vulkan' else 'gl')
-    pso = mac_pso(py, repo, work, lib, g, gpus, env, logs) if gfx == 'nvn' and g.table('shader_pairs.tsv').is_file() else None   # a stage of its own, before the app's
-    if prebake and pso: pso = mac_prebake(py, repo, work, msl, g, host, pso, env, logs)   # --prebake: a stage of its own, after the archive
-    elif pso: drop_prewarm(pso)   # what an earlier build with --prebake left
+    pso = mac_pso(py, repo, work, lib, g, gpus, env, logs, host=host if prebake else None) if gfx == 'nvn' and g.table('shader_pairs.tsv').is_file() else None   # a stage of its own, before the app's
     PROG.stage('Mac app', step='starting')
     # The launcher settings the IPA carries (dm/games/settings.py), without the iPhone's own switches: the app's settings window and Mac front ends show them (docs/frontends.md)
     settings = work / 'app/launcher.json'; settings.parent.mkdir(parents=True, exist_ok=True)
@@ -3273,8 +3548,8 @@ def parse_args(argv):
     ap.add_argument('--platform', choices=('ios', 'mac', 'mac-app'), help='ios = the IPA (or the Xcode project); mac = for development: build only what running the game on this Mac needs (the Mac shaders and the Mac host, '
                     'no iOS shaders, Xcode project or IPA), keep the extracted files and print the command that runs the game; mac-app = what mac builds, then a self-contained, double-clickable '
                     'Mac app of the game (default: <game name>.app in the NSP folder, -o names another) (default: the PLATFORM setting, ios)')
-    ap.add_argument('--icon', help='the app icon, a JPEG or PNG of any size (default: the ICON setting, else the game\'s icon from its control data; a dump has none, a NUP may have none)')
-    ap.add_argument('--fallback-icon', help='the app icon only when --icon / ICON is not given and the game has none of its own (a dump, a NUP without one), a JPEG or PNG of any size: a game with its own icon '
+    ap.add_argument('--icon', help='the app icon, a JPEG or PNG of any size (default: the ICON setting, else the game\'s icon from its control data; a dump or NUP may have none)')
+    ap.add_argument('--fallback-icon', help='the app icon only when --icon / ICON is not given and the game has none of its own (a dump or NUP without one), a JPEG or PNG of any size: a game with its own icon '
                     'keeps it, so a front end can pass a stand-in without knowing what the game carries (default: the FALLBACK_ICON setting, else such an app\'s icon is blank)')
     ap.add_argument('--mac-sign', help='--platform mac-app: the codesign identity for the app, e.g. "Developer ID Application: <name> (<team>)" (default: the MAC_SIGN setting, else ad-hoc)')
     ap.add_argument('--team-id', help='Apple developer team ID (default: TEAM_ID setting, DM_TEAM_ID environment, or saved Xcode selection)')
@@ -3321,9 +3596,29 @@ def icon_file(value, option):
     return p
 
 
+def kept_icon(app, work):
+    """The icon of the Mac app a build is about to replace, as a PNG in the work folder, for a game with no icon of its own (a dump, a NUP without one) when no icon option is given:
+    a rebuild from a terminal then keeps the icon the app had, as one from a front end does (it passes the old icon as --fallback-icon). None when there is no such app or icon"""
+    import plistlib
+    from xml.parsers.expat import ExpatError
+    try:
+        with open(app / 'Contents/Info.plist', 'rb') as f: info = plistlib.load(f)
+    except (OSError, ValueError, ExpatError): return None
+    name = info.get('CFBundleIconFile') if isinstance(info, dict) else None
+    if not isinstance(name, str) or not name or Path(name).name != name: return None
+    res = app / 'Contents/Resources'
+    src = res / name if (res / name).is_file() else res / (name if name.endswith('.icns') else name + '.icns')
+    if not src.is_file(): return None
+    out = work / 'kept-icon.png'
+    out.unlink(missing_ok=True)
+    try: r = subprocess.run(['sips', '-s', 'format', 'png', str(src), '--out', str(out)], capture_output=True)
+    except OSError: return None
+    return out if r.returncode == 0 and out.is_file() else None
+
+
 def app_icon(given, spare, *dirs):
-    """The image the app is given, and whether it is the fallback: --icon / ICON (given), else the game icon nx_extract saved from the control data (English, icon.jpg; in dirs, the packed version's
-    first, then the base game's), which a dump never has and a NUP may lack, else --fallback-icon / FALLBACK_ICON (spare), which never replaces a game's own. None without any"""
+    """The image the app is given, and whether it is the fallback: --icon / ICON (given), else the game icon from the control data (English, icon.jpg; in dirs, the packed version's
+    first, then the base game's), which a dump or NUP may lack, else --fallback-icon / FALLBACK_ICON (spare), which never replaces a game's own. None without any"""
     own = next((d / 'icon.jpg' for d in dirs if (d / 'icon.jpg').exists()), None)
     return given or own or spare, bool(spare and not (given or own))
 
@@ -3441,7 +3736,41 @@ def provisional_version(have, builds, requested, profile_root):
     return version
 
 
+def reconcile_provisional_marker(g, rom):
+    """Validate a provisional profile's romfs_marker against the packed program's own RomFS.
+    Keep any existing marker (including hand-edited ones); replace a missing marker (such as a sibling program's file
+    saved before 2cc4cda2) in place with the packed program's largest file, or clear it when its own RomFS is empty,
+    preserving all other settings in game.tsv."""
+    marker = g.get('romfs_marker')
+    if not marker or (rom / marker).exists():
+        return g
+    found = max(((st.st_size, name) for name, st in files_under(rom) if (rom / name).is_file()), default=None)
+    replacement = found[1] if found else ''
+    p = g.dir / 'game.tsv'
+    out, put = [], False
+    for line in p.read_text(encoding='utf-8').splitlines():
+        if not line.lstrip().startswith('#') and line.split('\t', 1)[0].strip() == 'romfs_marker':
+            if not put:
+                out.append(f'romfs_marker\t{replacement}')
+                put = True
+            continue
+        out.append(line)
+    if not put:
+        out.append(f'romfs_marker\t{replacement}')
+    atomic_text(p, '\n'.join(out) + '\n')
+    if replacement:
+        say(f'provisional profile romfs_marker {marker!r} is not in this program\'s RomFS: updated to {replacement!r}')
+    else:
+        say(f'provisional profile romfs_marker {marker!r} is not in this program\'s empty RomFS: cleared')
+    return type(g)(g.dir)
+
+
 def main(args=None):
+    with contextlib.ExitStack() as cleanup:
+        return _main(args, cleanup)
+
+
+def _main(args, cleanup):
     args = args or parse_args([])
     PROG.mode = progress_mode(args.progress or PROGRESS)
     global ALLOW_DAMAGED; ALLOW_DAMAGED = args.allow_damaged or ALLOW_DAMAGED
@@ -3508,8 +3837,12 @@ def main(args=None):
             raise BuildError(f'--aoc-dir requires a NUP without embedded DLC: {nup.name} lists {len(fam["dlc"])} DLC')
         say(f'a NUP: {nup.name}, {app:016X}, {len(fam["updates"])} update(s), {len(fam["dlc"])} DLC')
         if fam['nup'].siblings:
-            say(f'program {app & 0xFFF} of application {fam["nup"].application:016X}; the RomFS of its program(s) '
-                + ', '.join(f'{i} ({pid:016X})' for i, (pid, _, _) in sorted(fam['nup'].siblings.items())) + f' go beside its own ({pack_nup.PROGRAMS}/), --program picks another')
+            if getattr(fam['nup'], 'multi_program', False):
+                say(f'program {app & 0xFFF} of multi-program application {fam["nup"].application:016X}; sibling program(s) '
+                    + ', '.join(f'{i} ({pid:016X})' for i, (pid, _, _) in sorted(fam['nup'].siblings.items())))
+            else:
+                say(f'program {app & 0xFFF} of application {fam["nup"].application:016X}; the RomFS of its program(s) '
+                    + ', '.join(f'{i} ({pid:016X})' for i, (pid, _, _) in sorted(fam['nup'].siblings.items())) + f' go beside its own ({pack_nup.PROGRAMS}/), --program picks another')
         if fam['base'] is None: say(pack_nup.NO_BASE)
     elif dump:
         app, fam = scan_dump(nsp_dir, int(want, 16) if want else None)
@@ -3539,7 +3872,7 @@ def main(args=None):
             facts = survey(nsp_dir, app, fam, keys, repo, py, env)
             if args.survey_only or SURVEY_ONLY: return
             facts['survey'] = str(nsp_dir / f'{app:016X}_survey' / 'survey.md')
-            write_profile(pdir / f'{app:016X}', app, facts)
+            write_profile(pdir / f'{app:016X}', app, facts, program_of=(getattr(args, 'in_programs', None) or {}).get('program_of'))
         # the profile folder joins the search path of game.py, which the shader tools, make and build_ipa.sh all use (DM_GAMES_DIR)
         os.environ['DM_GAMES_DIR'] = env['DM_GAMES_DIR'] = os.pathsep.join([str(pdir)] + [d for d in os.environ.get('DM_GAMES_DIR', '').split(os.pathsep) if d and d != str(pdir)])
         if force and gamemod.by_title(app, own):   # dm/games has the game too: every tool (game.py, make, build_ipa.sh) takes the provisional profile first (DM_GAMES_FIRST)
@@ -3579,8 +3912,9 @@ def main(args=None):
     say('Mac app: the Mac shaders and the Mac host, packed into a Mac app; no iOS shaders, Xcode project or IPA' if mac_pack else 'Mac-only build for development: the Mac shaders and the Mac host, no iOS shaders, Xcode project or IPA' if mac else f'Xcode project: {project}' if prepare_xcode else f'output IPA: {out_ipa}')
     say(f'work folder (extracted game files in extract/, {"kept for the next build" if keep else "deleted after the IPA is built"}): {work}')
     xlate = repo / 'dm/gfx/tools/dmsh_xlate_bin/dmsh_xlate'
-    # DM_GAME picks the profile; DM_ROOT / WORK point at <id>_build: the tools' default paths and temporary directories all stay inside it
-    env.update(DM_GAME=g.id, DM_ROOT=str(work), WORK=str(work / 'tmp'))
+    # DM_GAME picks the profile; DM_ROOT points at <id>_build and WORK defaults to <id>_build/tmp unless caller WORK directs scratch elsewhere
+    work_tmp = cleanup.enter_context(scratch_work(work / 'tmp', g.id))
+    env.update(DM_GAME=g.id, DM_ROOT=str(work), WORK=str(work_tmp))
     logs = work / 'logs'
     check_prereqs(env, xlate, mac)
     picks = pick_nsps(fam, have, versions)
@@ -3615,6 +3949,7 @@ def main(args=None):
         say(f'derived game profile for {pkg_ver} ({disp}): {g.dir}')
     sv = versions if derived else need   # the versions whose files the shaders come from
     game = dirs[pkg_ver]
+    if provisional: g = reconcile_provisional_marker(g, rfs.source(game))
     # how the shaders are got follows from the packed version's files (profile_guess.py shader_sources): the graphics API, and the shaders made only at run time
     src = build_sources(repo, game, g.modules_in(game / 'ExeFS'))
     gfx = src['graphics'][0]   # nvn, vulkan (Hades: the host's Vulkan layer, SPIR-V shaders) or gl (Digimon Story Cyber Sleuth: the host's GL layer, GLSL sources)
@@ -3628,7 +3963,9 @@ def main(args=None):
         raise BuildError('--nvn-runtime-python requires --platform mac-app and an NVN game')
     glslc = gfx == 'nvn' and src['glslc_capture'][0]   # shaders the game compiles at run time, captured in the Mac host (capture_glslc)
     vkcap = gfx == 'vulkan' and (src['vk_capture'][0] or bool(capture_wanted(g, 'vk')))   # SPIR-V shaders the game generates at run time, captured in the Mac host (capture_shaders)
-    glcap = gfx == 'gl' and not src.get('gl_fixed', (False,))[0] and (src['gl_capture'][0] or bool(capture_wanted(g, 'gl')))   # GLSL the game puts together at run time (LÖVE), captured in the Mac host (capture_shaders)
+    gl_want = capture_wanted(g, 'gl')
+    glcap = gfx == 'gl' and not src.get('gl_fixed', (False,))[0] and (src['gl_capture'][0] or bool(gl_want))
+    nvn_gl = gfx == 'nvn' and bool(gl_want)   # NVN presents, with run-time GLSL for a second renderer in the same program
     uedec = gfx == 'nvn' and src['ue_decode'][0]   # Unreal Engine shaders, Oodle-compressed in the paks' shader code archives, decoded in the Mac host (decode_ue_shaders)
     if gfx == 'vulkan': say(f'Vulkan game ({src["graphics"][1]}): vk_shaders.py translates the shaders instead of the NVN shader chain')
     if gfx == 'gl': say(f'OpenGL game ({src["graphics"][1]}): gl_shaders.py translates the shaders instead of the NVN shader chain')
@@ -3636,12 +3973,12 @@ def main(args=None):
     if gfx == 'nvn': check_metal(py, repo, env)   # before the captures and the shader split, which take minutes
     for on, k in ((glslc, 'glslc_capture'), (vkcap, 'vk_capture'), (glcap, 'gl_capture'), (uedec, 'ue_decode'), (gfx == 'nvn' and src['oodle_packs'][0], 'oodle_packs'), (gfx == 'nvn' and src['ue_legacy'][0], 'ue_legacy')):
         if on: say(src[k][1])
-    PROG.add(glslc + vkcap + glcap + uedec + (gfx == 'nvn'))
+    PROG.add(glslc + vkcap + glcap + uedec + (gfx == 'nvn') + 2 * nvn_gl)
     aoc = stage_external_dlc(work, aoc_dir) if aoc_dir is not None else extract_aoc(nx, keys, repo, work, app, fam, logs)
     dlc_roms = sorted(p for p in aoc.iterdir() if p.is_dir() or p.suffix == '.img') if aoc else []
     base = next((dirs[v] for v in versions if picks[v][1] is None), dirs[versions[0]])   # the folder the base game was extracted to alone
-    # the app name and bundle ID both come from the base NSP: the game name in its control data, and a bundle ID from its title ID; a setting / the command line overrides them
-    app_name = args.app_name or APP_NAME or nacp.name(base / 'control.nacp') or (g.get('name') if dump else '')   # a dump has no control data, a NUP may have no NACP
+    # the app name comes from the packed version's control data, else the base's, and the bundle ID from the title ID; a setting / the command line overrides them
+    app_name = args.app_name or APP_NAME or nacp.name(game / 'control.nacp') or nacp.name(base / 'control.nacp') or (g.get('name') if dump else '')   # a dump or NUP may have no NACP
     if not app_name and not (mac and not mac_pack): raise BuildError(f'no game name in the base extraction ({base / "control.nacp"}; an older extraction did not save it: delete extract/ and run again, or give --app-name)')
     bundle_id = args.bundle_id or BUNDLE_ID or saved_signing.get('PRODUCT_BUNDLE_IDENTIFIER') or f'org.nxnative.{app:016x}'
     team_id = args.team_id or TEAM_ID or env.get('DM_TEAM_ID') or saved_signing.get('DEVELOPMENT_TEAM') or '0000000000'
@@ -3650,9 +3987,13 @@ def main(args=None):
         except ValueError as e: raise BuildError(str(e)) from e
     app_version = app_version_of(game, None if nup else base, g, pkg_ver, nup_label, nup_base=fam['base'] if nup else None)
     if mac_pack and not (args.out or OUT_IPA): out_ipa = work.parent / f'{mac_app_name(app_name)}{"-provisional" if shadowed else ""}.app'
+    kept = False
+    if mac_pack and getattr(args, 'in_programs', None) is None and not user_icon and not spare_icon and not any((d / 'icon.jpg').exists() for d in (game, base)) and out_ipa and Path(out_ipa).is_dir():
+        spare_icon = kept_icon(Path(out_ipa), work)
+        kept = spare_icon is not None
     icon, stand_in = app_icon(user_icon, spare_icon, game, base)
     if (not mac or mac_pack) and getattr(args, 'in_programs', None) is None:   # an app is made, once: a program packed with the application's first (in_programs) is part of its app
-        if stand_in: say(f'no game icon: the app takes the fallback icon {spare_icon} (--fallback-icon / FALLBACK_ICON)')
+        if stand_in: say(f'no game icon: the app keeps the icon it has ({Path(out_ipa).name})' if kept else f'no game icon: the app takes the fallback icon {spare_icon} (--fallback-icon / FALLBACK_ICON)')
         say_game(app, app_name, app_version or '1.0', bundle_id, None if prepare_xcode else out_ipa, icon)
     # the game language: Horizon gives the game one of the languages its control data lists (the packed version's, which an update may extend), so the one packed must be among them
     control = languages_control(game, base)
@@ -3670,35 +4011,44 @@ def main(args=None):
         if provisional and heapck and pg.heap_check_needed(game / 'ExeFS'):
             if apple_silicon(): PROG.add(1); g = heap_check(repo, game, patched, work, env, logs, g)
             else: say('no heap check: it boots the game in the Mac host, which needs a Mac with Apple silicon; the profile keeps its guessed heap keys')
-        if HEAP_CHECK and not args.no_heap_check and pg.has_va(game / 'ExeFS') and not region_checked(g, patched) and apple_silicon():   # where its address regions reach (a derived build too: the registered builds' cuts do not reach it)
-            PROG.add(1); g = region_check(repo, game, patched, work, env, logs, g)
+        if HEAP_CHECK and not args.no_heap_check and pg.has_va(game / 'ExeFS') and not region_checked(g, patched, mac) and apple_silicon():   # where its address regions reach (a derived build too: the registered builds' cuts do not reach it)
+            PROG.add(1); g = region_check(repo, game, patched, work, env, logs, g, mac)
     observed_glslc = capture_glslc(repo, {v: dirs[v] for v in sv}, pkg_ver, patched, work, env, logs, g) if glslc else None
     if uedec: decode_ue_shaders(repo, {v: dirs[v] for v in sv}, pkg_ver, patched, work, env, logs, g)
     sh = work / 'shader'
     if gfx == 'vulkan':   # the packed version's merged RomFS holds the SPIR-V files the game loads; a capture holds those it generates. A damaged copy (ALLOW_DAMAGED) is keyed by its files' times, as split_shaders keys it
         cap = capture_shaders(repo, game, patched, work, env, logs, g, 'vk') if vkcap else None
-        ios = build_vk_shaders(py, repo, [rfs.source(game), game / 'ExeFS/main'] + dlc_roms + ([cap] if cap else []), sh, env, logs, g, mac=mac, provisional=bool(provisional or derived or ALLOW_DAMAGED))
+        ios = build_vk_shaders(py, repo, [rfs.source(game), game / 'ExeFS/main'] + ([cap] if cap else []), sh, env, logs, g, mac=mac, provisional=bool(provisional or derived or ALLOW_DAMAGED), dlc_roms=dlc_roms)
     elif gfx == 'gl':   # the GLSL sources in the packed version's archives and in its main (the game compiles them at run time; the host finds each by the hash of its text), and a capture of those it puts together
         cap = capture_shaders(repo, game, patched, work, env, logs, g, 'gl') if glcap else None
-        roots = [rfs.source(game), game / 'ExeFS/main'] + dlc_roms + ([cap] if cap else [])
+        roots = [rfs.source(game), game / 'ExeFS/main'] + ([cap] if cap else [])
         fixed, prov = src['gl_fixed'][0], bool(provisional or derived or ALLOW_DAMAGED)
         try:
-            ios = build_gl_shaders(py, repo, roots, sh, env, logs, g, mac=mac, provisional=prov, fixed=fixed)
+            ios = build_gl_shaders(py, repo, roots, sh, env, logs, g, mac=mac, provisional=prov, fixed=fixed, dlc_roms=dlc_roms)
         except BuildError:
             if cap or fixed or not apple_silicon(): raise
             say('offline GLSL files did not translate standalone: capturing run-time GL shaders on the Mac')
             PROG.add(1)
             cap = capture_shaders(repo, game, patched, work, env, logs, g, 'gl')
-            ios = build_gl_shaders(py, repo, roots + [cap], sh, env, logs, g, mac=mac, provisional=prov, fixed=fixed)
+            ios = build_gl_shaders(py, repo, roots + [cap], sh, env, logs, g, mac=mac, provisional=prov, fixed=fixed, dlc_roms=dlc_roms)
         else:
             if not cap and not fixed and apple_silicon() and gl_table_only_main(ios / 'gl/gl_shaders.tsv'):
                 say('only embedded main shaders translated offline (no RomFS GLSL translated standalone): capturing run-time GL shaders on the Mac')
                 PROG.add(1)
                 cap = capture_shaders(repo, game, patched, work, env, logs, g, 'gl')
-                ios = build_gl_shaders(py, repo, roots + [cap], sh, env, logs, g, mac=mac, provisional=prov, fixed=fixed)
+                ios = build_gl_shaders(py, repo, roots + [cap], sh, env, logs, g, mac=mac, provisional=prov, fixed=fixed, dlc_roms=dlc_roms)
     else:
-        # Trinity packs and legacy Unreal paks: the split decodes them with the packed version's own decoder (Oodle, LZ5), in the Mac host built for the profile
-        oodle = (lambda: {'DM_OODLE_HOST': str(build_mac_host(repo, work / 'tools/dmhost', env, logs, g)), 'DM_OODLE_MODULES': str(patched)}) if src['oodle_packs'][0] or src['ue_legacy'][0] else None
+        # Decoder-backed archives (Trinity, PKZ, GFPAK, UE3, Frostbite, TT Games DAT, Anvil / Scimitar .forge, legacy Unreal paks):
+        # the split decodes them with the packed version's own decoder (Oodle, LZ5), in the Mac host built for the profile.
+        # Check DLC roots too when the program's own RomFS had none (The Ezio Collection's Brotherhood and Revelations keep their .forge files in DLC).
+        needs_oodle = src['oodle_packs'][0] or src['ue_legacy'][0]
+        if not needs_oodle and dlc_roms:
+            dlc_src = dlc_decoder_sources(repo, work, game, dlc_roms)
+            for k in ('oodle_packs', 'ue_legacy'):
+                if dlc_src[k][0]:
+                    say(f'DLC: {dlc_src[k][1]}')
+                    needs_oodle = True
+        oodle = (lambda: {'DM_OODLE_HOST': str(build_mac_host(repo, work / 'tools/dmhost', env, logs, g)), 'DM_OODLE_MODULES': str(patched)}) if needs_oodle else None
         own = bool(provisional or derived)   # the shader tables come from this build's split (the profile's are checked otherwise)
         def derive_shader_tables(reason):   # called only after the optional-content or additive-compute comparison passed
             nonlocal g, derived
@@ -3715,20 +4065,32 @@ def main(args=None):
         derive_compute = (lambda: derive_shader_tables('the reader decoded additional compute kernels from this registered build')) if not own else None
         pkey = split_shaders(py, repo, [rfs.source(dirs[v]) for v in sv], [dirs[v] / 'ExeFS/main' for v in sv], sh / 'pkg', env, logs, g, own, oodle, dlc_roms, derive_dlc, derive_compute, glslc_play=play)
         if observed_glslc is not None: check_glslc_coverage(observed_glslc, g)
-        seen = seen_keys(g, sh, seen_logs(work, app)) if seen_shaders else None
+        seen = seen_keys(g, sh, seen_logs(work, app), seen_lists(work, app)) if seen_shaders else None
         ios = build_shaders(py, repo, sh, xlate, env, logs, g, pkey, mac, seen, None if mac else ios_wants_pulling(g, ios_gpus((args.gpu or PSO_GPUS).strip(), g), prepare_xcode, env))
+        if nvn_gl:
+            mac_out = ios if mac else sh / 'cache'
+            cap = capture_shaders(repo, game, patched, work, env, logs, g, 'gl', msl=mac_out, aoc=aoc)
+            build_gl_shaders(py, repo, [cap], sh, env, logs, g, mac=mac, mac_out=mac_out)
     motion = MOTION if args.motion is None else args.motion
     jit = uses_jit(game / 'ExeFS')
     if jit and not mac and not mac_pack: capture_jit(py, repo, game, patched, work, env, logs, g)   # the iPhone runs no code made at run time: it serves the plugin's output from an image
     env_file = build_env_file(work, args.env_file or DM_ENV_FILE, motion)
     romfs = packed_romfs(repo, game, app)
     if not motion: say('motion (gyro): off, DM_MOTION=0 is built in (on the iPhone, DM_MOTION=1 in the app\'s Documents/env.txt turns it back on)')
-    if mac_pack:   # a Mac app: the Mac host, then the app packed from it and the build's files
+    discovered = {}
+    if provisional and not PROGRAM_INDEX and getattr(args, 'in_programs', None) is None and not g.get('programs', ''):
+        b, u = picks[pkg_ver]
+        discovered = discover_sibling_programs(fam, app, b, u, nx, keys, logs / f'programs_list_{pkg_ver}.log', env)
+        if discovered:
+            say('multi-program application: discovered sibling program(s) ' + ', '.join(f'{i} ({d["tid"]:016X})' for i, d in discovered.items()))
+    if mac_pack:   # a Mac app: the other programs (so their profiles are finalized), then the combined Mac host, then the app
         if getattr(args, 'in_programs', None) is not None:   # a program of the game: the app its first program's build packs takes these
-            rmtree(work / 'tmp'); return {'patched': patched, 'romfs': romfs, 'msl': ios / (f'b-{chain_of(repo)}' if gfx == 'nvn' else 'vk' if gfx == 'vulkan' else 'gl'), 'tables': g.table('shader_map.tsv').parent, 'html': game / 'html', 'gfx': gfx}
+            rmtree(work / 'tmp'); return {'tid': app, 'profile': g.id, 'profile_dir': g.dir.parent, 'patched': patched, 'romfs': romfs, 'msl': ios / (f'b-{chain_of(repo)}' if gfx == 'nvn' else 'vk' if gfx == 'vulkan' else 'gl'), 'tables': g.table('shader_map.tsv').parent, 'html': game / 'html', 'gfx': gfx}
+        programs = other_programs(args, g, provisional=provisional, discovered=discovered, app=app, base_version=fam.get('base_version', 0))
+        g = finalize_provisional_programs(g, programs, provisional)
+        merge_games_dir(env, [r.get('profile_dir') for r in programs.values()])
         host, font = mac_host(py, repo, work, env, logs, g)
-        programs = other_programs(args, g)
-        if not icon: say(('no game icon: the NUP carries none' if nup else 'no game icon: a dump folder has no control data') + '; the app\'s icon will be blank; --icon / ICON or --fallback-icon / FALLBACK_ICON gives it one' if dump else '[RED] no game icon in the extraction (an older extraction did not save it: delete extract/ and run again); the app\'s icon will be blank')
+        if not icon: say(f'no game icon: the {"NUP" if nup else "dump"} carries none; the app\'s icon will be blank; --icon / ICON or --fallback-icon / FALLBACK_ICON gives it one' if dump else '[RED] no game icon in the extraction (an older extraction did not save it: delete extract/ and run again); the app\'s icon will be blank')
         mac_app(py, repo, out_ipa, app, work, game, patched, host, font, ios, aoc, gfx, lang, g, app_name, app_version, bundle_id, icon, args.mac_sign or MAC_SIGN, env, logs, env_file,
                 (args.gpu or PSO_GPUS).strip(), programs, control, PREBAKE if args.prebake is None else args.prebake, runtime_python=runtime_python, romfs=romfs)
         rmtree(work / 'tmp')
@@ -3738,14 +4100,25 @@ def main(args=None):
         report_profile_status(g, reg, pkg_ver, derived, provisional, 'Mac app', patched)
         return
     if mac:   # a Mac-only build ends with the Mac host and the command that runs the game
-        first = getattr(args, 'in_programs', None)   # a program packed with the application's first: its host, built over all of them, and its fonts
-        host, font = (first['host'], first['font']) if first else mac_host(py, repo, work, env, logs, g)
-        parts = {'font': font}
         nvn_runtime = (py, repo / 'dm/gfx/tools/dmsh_live.py') if use_nvn_runtime else None
+        if getattr(args, 'in_programs', None) is not None:   # a program packed with the application's first: finalized here, run command built after the combined host
+            rmtree(work / 'tmp')
+            return {'tid': app, 'profile': g.id, 'profile_dir': g.dir.parent, 'work': work, 'game': game, 'patched': patched, 'msl': ios, 'aoc': aoc, 'gfx': gfx, 'lang': lang,
+                    'env': dict(env), 'logs': logs, 'g': g, 'env_file': env_file, 'partial': seen_shaders, 'jit': jit, 'nvn_runtime': nvn_runtime, 'romfs': romfs}
+        child_runs = {} if PROGRAM_INDEX else other_programs(args, g, provisional=provisional, discovered=discovered, app=app, base_version=fam.get('base_version', 0))
+        g = finalize_provisional_programs(g, child_runs, provisional)
+        merge_games_dir(env, [r.get('profile_dir') for r in child_runs.values()])
+        host, font = mac_host(py, repo, work, env, logs, g)
+        parts = {'font': font}
         cmd = mac_run(work, game, patched, host, font, ios, aoc, gfx, lang, env, logs, g, env_file, partial=seen_shaders, parts=parts, jit=jit, nvn_runtime=nvn_runtime, romfs=romfs)
         rmtree(work / 'tmp')
-        if getattr(args, 'in_programs', False): return parts
-        programs = None if PROGRAM_INDEX else mac_programs(args, g, parts)
+        child_parts = {}
+        for n, r in sorted(child_runs.items()):
+            cp = {'font': font}
+            mac_run(r['work'], r['game'], r['patched'], host, font, r['msl'], r['aoc'], r['gfx'], r['lang'], r['env'], r['logs'], r['g'], r['env_file'],
+                    partial=r['partial'], parts=cp, jit=r['jit'], nvn_runtime=r['nvn_runtime'], romfs=r['romfs'], program_index=n)
+            child_parts[n] = cp
+        programs = write_mac_programs(parts, child_parts)
         if programs: cmd = cmd.replace(' && ', f' && DM_PROGRAMS={shlex.quote(str(programs))} ', 1)
         say(f'done: the game runs on the Mac with this command (its save in {work / "run/save"}, kept from run to run; DM_WINDOW=1 opens a window, DM_AUDIO=1 plays sound):')
         PROG.say(cmd)
@@ -3754,8 +4127,10 @@ def main(args=None):
         return
 
     if getattr(args, 'in_programs', None) is not None:   # a program of the game: the app its first program's build packs takes these
-        rmtree(work / 'tmp'); return {'row': (PROGRAM_INDEX, g.id, patched, romfs, ios, gfx), 'ex': ex, 'keep': keep}
-    programs = other_programs(args, g)
+        rmtree(work / 'tmp'); return {'tid': app, 'profile': g.id, 'profile_dir': g.dir.parent, 'row': (PROGRAM_INDEX, g.id, patched, romfs, ios, gfx), 'ex': ex, 'keep': keep}
+    programs = other_programs(args, g, provisional=provisional, discovered=discovered, app=app, base_version=fam.get('base_version', 0))
+    g = finalize_provisional_programs(g, programs, provisional)
+    merge_games_dir(env, [r.get('profile_dir') for r in programs.values()])
     if programs and romfs_mode == 'separate': raise BuildError('a game of several programs keeps its files in the app (ROMFS / --romfs bundle): Documents holds one RomFS image, one program\'s')
     if not prepare_xcode and free_gb(out_ipa.parent) < 5: raise BuildError(f'less than 5 GB free on the volume of {out_ipa.parent}')
     say('preparing the Xcode project' if prepare_xcode else f'building the IPA → {out_ipa}')
@@ -3767,7 +4142,7 @@ def main(args=None):
     if shader_files: ipa_env['DM_SHADER_FILES'] = '1'; say('shader library: its separate files (DM_SHADER_FILES=1), for install tools that cannot copy a large file')
     if app_version: ipa_env['DM_APP_VERSION'] = app_version
     if icon: ipa_env['DM_ICON'] = str(icon); say(f'app icon: {icon}')   # app icon (found above)
-    else: say(('no game icon: the NUP carries none' if nup else 'no game icon: a dump folder has no control data') + '; the home-screen icon will be blank; --icon / ICON or --fallback-icon / FALLBACK_ICON gives it one' if dump else '[RED] no game icon in the extraction (an older extraction did not save it: delete extract/ and run again); the home-screen icon will be blank')
+    else: say(f'no game icon: the {"NUP" if nup else "dump"} carries none; the home-screen icon will be blank; --icon / ICON or --fallback-icon / FALLBACK_ICON gives it one' if dump else '[RED] no game icon in the extraction (an older extraction did not save it: delete extract/ and run again); the home-screen icon will be blank')
     if env_file: ipa_env['DM_ENV_FILE'] = str(Path(os.path.expanduser(env_file)).resolve())
     show_fps = SHOW_FPS if args.show_fps is None else args.show_fps
     ipa_env['DM_SHOW_FPS'] = '1' if show_fps else '0'
@@ -3803,6 +4178,9 @@ def main(args=None):
     tree_tar.unpack(xcode_data, say)
     run(['bash', repo / 'dm/ios/tools/build_ipa.sh', out_ipa], logs / 'build_ipa.log', env=ipa_env, on_line=watch.line)
     if not out_ipa.is_file(): raise BuildError(f'no IPA at {out_ipa}')
+    if xcode_data.is_dir():
+        PROG.watch(None)
+        PROG.set(step='packing Xcode derived data')
     tree_tar.pack(xcode_data, say)
     PROG.end(f'{out_ipa.name}, {amount(out_ipa.stat().st_size, "B")}')
     rmtree(work / 'tmp')

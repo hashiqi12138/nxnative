@@ -15,9 +15,10 @@ private func info(_ key: String) -> Any? { Bundle.main.object(forInfoDictionaryK
 /// sends it there after each save (dm/host/save_sync.h); the folder is a bookmark (CloudSaves.m).
 private struct CloudSavesSection: View {
     let checking: Bool
-    @State private var folder: String = ""
-    @State private var note: String = ""
-    @State private var picking = false
+    let folder: String
+    let note: String
+    let choose: () -> Void
+    let clear: () -> Void
 
     var body: some View {
         Section {
@@ -27,71 +28,17 @@ private struct CloudSavesSection: View {
                 Text(folder.isEmpty ? "Off" : (folder as NSString).lastPathComponent)
                     .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             }
-            Button(folder.isEmpty ? "Choose a folder in iCloud Drive…" : "Choose a different folder…") { picking = true }
+            Button(folder.isEmpty ? "Choose a folder in iCloud Drive…" : "Choose a different folder…", action: choose)
                 .disabled(checking)
-                // The sheet sits on the button, not on the Section: SwiftUI hands a Section's modifiers to every row, so one tap presented a picker per row and they invalidated each other (LNPANDY/NX2Apple#315).
-                .sheet(isPresented: $picking) {
-                    DocumentPicker(types: [.folder]) { url in
-                        picking = false
-                        if dm_store_cloud_saves(url) {
-                            note = "Saved. The game uses this folder when you press Play."
-                            refresh()
-                        } else {
-                            note = "That folder could not be remembered — try a different one."
-                        }
-                    } onCancel: { picking = false }
-                }
             if !folder.isEmpty {
-                Button("Turn off cloud saves", role: .destructive) {
-                    dm_clear_cloud_saves(); refresh(); note = ""
-                }
-                .disabled(checking)
+                Button("Turn off cloud saves", role: .destructive, action: clear)
+                    .disabled(checking)
             }
         } footer: {
             Text(note.isEmpty
                  ? "Choose a folder in iCloud Drive, and the same one in the Mac app's Cloud saves. The save comes in when the game starts and goes out after each save; a save that is replaced is kept in save-backups."
                  : note)
         }
-        .onAppear(perform: refresh)
-    }
-
-    private func refresh() {
-        var stale: ObjCBool = false
-        folder = dm_cloud_saves_path(&stale) ?? ""
-        if stale.boolValue && folder.isEmpty {
-            note = "The folder you chose before is no longer readable. Please choose it again."
-        }
-    }
-}
-
-/// UIDocumentPickerViewController for a folder, in the two callbacks a SwiftUI sheet wants.
-private struct DocumentPicker: UIViewControllerRepresentable {
-    var types: [UTType] = [.folder]
-    let onPick: (URL) -> Void
-    let onCancel: () -> Void
-
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        // .open (not .import): the folder stays where it is and the bookmark keeps pointing at it.
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: false)
-        picker.allowsMultipleSelection = false
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ vc: UIDocumentPickerViewController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick, onCancel: onCancel) }
-
-    final class Coordinator: NSObject, UIDocumentPickerDelegate {
-        let onPick: (URL) -> Void
-        let onCancel: () -> Void
-        init(onPick: @escaping (URL) -> Void, onCancel: @escaping () -> Void) {
-            self.onPick = onPick; self.onCancel = onCancel
-        }
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            if let url = urls.first { onPick(url) } else { onCancel() }
-        }
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { onCancel() }
     }
 }
 
@@ -103,6 +50,9 @@ private struct LauncherView: View {
     @State private var check = 0   // which Play the running check is for: one the player went on from without it is dropped
     @State private var report: SaveSyncReport?
     @State private var asking: SaveSyncReport.Step?
+    @State private var pickingCloudFolder = false
+    @State private var cloudFolder = ""
+    @State private var cloudNote = ""
 
     var body: some View {
         GeometryReader { geometry in
@@ -122,6 +72,23 @@ private struct LauncherView: View {
             }
         }
         .preferredColorScheme(.dark)
+        // Native fileImporter above the landscape/portrait split: presents UIDocumentPickerViewController directly (not embedded as a child of a SwiftUI sheet host), avoids per-row Section modifiers (LNPANDY/NX2Apple#315), and keeps picker identity across orientation changes (seedds/nxnative#3278).
+        .fileImporter(isPresented: $pickingCloudFolder, allowedContentTypes: [.folder]) { result in
+            switch result {
+            case .success(let url):
+                if dm_store_cloud_saves(url) {
+                    cloudNote = "Saved. The game uses this folder when you press Play."
+                    refreshCloudSaves()
+                } else {
+                    cloudNote = "That folder could not be remembered — try a different one."
+                }
+            case .failure(let error):
+                let ns = error as NSError
+                if error is CancellationError || (ns.domain == NSCocoaErrorDomain && ns.code == NSUserCancelledError) { return }
+                fputs("launcher: cloud-save folder picker failed: \(error.localizedDescription)\n", stderr)
+                cloudNote = "That folder could not be opened — try a different one."
+            }
+        }
         .confirmationDialog(SaveSyncReport.chooseTitle, isPresented: isAsking(.choose), titleVisibility: .visible, presenting: report) { r in
             Button(r.localLabel(here: "iPhone")) { go(r.localChoice) }
             Button(r.cloudLabel) { go(r.cloudChoice) }
@@ -145,8 +112,19 @@ private struct LauncherView: View {
             }
         }
         // Rotation turns the screen as soon as it is picked, before Play (front_ios.m dm_rotation_set); the saved pick at once when the screen shows
-        .onAppear { if let v = m.values["DM_ROTATION"] { dm_rotation_set(v) } }
+        .onAppear {
+            refreshCloudSaves()
+            if let v = m.values["DM_ROTATION"] { dm_rotation_set(v) }
+        }
         .onChange(of: m.values["DM_ROTATION"]) { _, v in if let v { dm_rotation_set(v) } }
+    }
+
+    private func refreshCloudSaves() {
+        var stale: ObjCBool = false
+        cloudFolder = dm_cloud_saves_path(&stale) ?? ""
+        if stale.boolValue && cloudFolder.isEmpty {
+            cloudNote = "The folder you chose before is no longer readable. Please choose it again."
+        }
     }
 
     private func header(icon size: CGFloat) -> some View {
@@ -181,7 +159,16 @@ private struct LauncherView: View {
                 Text("Brings back all settings this game was tested with.")
             }
             // The background save check reads the selected folder until it returns.
-            CloudSavesSection(checking: checking)
+            CloudSavesSection(
+                checking: checking,
+                folder: cloudFolder,
+                note: cloudNote,
+                choose: { pickingCloudFolder = true },
+                clear: { dm_clear_cloud_saves(); refreshCloudSaves(); cloudNote = "" }
+            )
+            if PrewarmUpload.available {
+                Section { PrewarmUploadSetting() }
+            }
             Section {
                 HStack {
                     Text("Memory available")
@@ -212,11 +199,13 @@ private struct LauncherView: View {
     /// Play, once the cloud's save is compared with this iPhone's (save_sync_report, SaveSyncReport): a save that changed on both sides is the player's pick, not the
     /// newer file's, and a cloud save that did not come is said so before the game starts without it.
     private func start() {
+        dm_cloud_saves_env()   // DM_SAVE_SYNC from the picked folder, as the game's mount will read it (front_ios.m calls it again at the start)
+        let folder = getenv("DM_SAVE_SYNC").map { String(cString: $0) }
+        guard let folder, SaveSyncReport.syncEnabled(folder) else { go(nil); return }
         check += 1; checking = true; asking = nil
         let mine = check
-        dm_cloud_saves_env()   // DM_SAVE_SYNC from the picked folder, as the game's mount will read it (front_ios.m calls it again at the start)
         DispatchQueue.global(qos: .userInitiated).async {
-            let r = Self.compare()
+            let r = Self.compare(folder: folder)
             DispatchQueue.main.async {
                 guard checking, check == mine else { return }   // the player played without it
                 checking = false
@@ -229,11 +218,12 @@ private struct LauncherView: View {
     }
 
     /// Blocks while the cloud's file downloads (SaveSyncReport.waitMs at most). nil: no report (the host then decides as it always did)
-    private static func compare() -> SaveSyncReport? {
+    private static func compare(folder: String) -> SaveSyncReport? {
         // getenv, not ProcessInfo.environment: main.m sets DM_SAVE and applies env.txt after that snapshot
         guard let save = getenv("DM_SAVE") else { fputs("launcher: save sync: no DM_SAVE\n", stderr); return nil }
         var buf = [CChar](repeating: 0, count: 1024)
-        guard save_sync_report(save, dm_save_title(), nil, SaveSyncReport.waitMs, &buf, buf.count) == 0 else {
+        let r = folder.withCString { save_sync_report(save, dm_save_title(), $0, SaveSyncReport.waitMs, &buf, buf.count) }
+        guard r == 0 else {
             fputs("launcher: save sync: no report on \(String(cString: save))\n", stderr)
             return nil
         }
@@ -265,7 +255,7 @@ public func dmShowLauncher(_ viewController: UnsafeMutableRawPointer, _ done: @c
     guard let file = try? JSONDecoder().decode(SettingsFile.self, from: data), !file.settings.isEmpty else { fputs("[RED] launcher: dm/launcher.json cannot be read; starting the game\n", stderr); return false }
     let model = LauncherModel(file.settings)
     gameMenuModel = model   // the in-game menu shows and saves the same choices (GameMenu.swift)
-    if ProcessInfo.processInfo.environment["DM_LAUNCHER"] == "0" { fputs("launcher: off (DM_LAUNCHER=0)\n", stderr); model.applySaved(); return false }
+    if ProcessInfo.processInfo.environment["DM_LAUNCHER"] == "0" { fputs("launcher: off (DM_LAUNCHER=0)\n", stderr); model.apply(persist: false); return false }
     let parent = Unmanaged<UIViewController>.fromOpaque(viewController).takeUnretainedValue()
     var host: UIViewController?
     let view = LauncherView(m: model) {
