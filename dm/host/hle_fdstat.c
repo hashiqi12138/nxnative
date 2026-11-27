@@ -11,6 +11,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#if defined(__APPLE__)
+static inline int dm_fd_path(int fd, char *buf, size_t n) { (void)n; return fcntl(fd, F_GETPATH, buf); }
+#endif
+
 static void *fdstat_main(void *arg) {
     int every = (int)(intptr_t)arg; char prev[1024] = "";
     for (unsigned round = 1;; round++) {

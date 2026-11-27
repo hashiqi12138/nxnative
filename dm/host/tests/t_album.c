@@ -1,6 +1,9 @@
 // Local album service unit test (hle_album.c, GitHub issue #3211): verifies all registered nn::album::SaveScreenshot overloads,
 // 720p and 1080p RGBA8888 PNG output and pixel fidelity (ignoring source alpha), ImageOrientation rotations 0..3, collision-free
 // atomic publishing, DM_ALBUM_DIR / DM_ROOT / DM_SAVE fallback order, and invalid-input / unwritable-directory error handling.
+#include <CoreFoundation/CoreFoundation.h>
+#include <CoreGraphics/CoreGraphics.h>
+#include <ImageIO/ImageIO.h>
 #include "../hle_album.c"
 #include <dirent.h>
 #include <mach-o/getsect.h>

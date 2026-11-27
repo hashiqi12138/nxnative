@@ -333,7 +333,12 @@ NVN(nvnMemoryPoolInitialize, NVNboolean, NVNmemoryPool *p, const NVNmemoryPoolBu
     // the whole pool. Without this no pool ever carried its flags, and Breath of the Wild's 115 MB fog pool was
     // memcpy'd back whole after every submission: 350 ms a frame, 3 fps (measured 2026-11-16). Weak: the Metal backend
     // (nvn_mtl.m) defines nothing - its buffers share the memory, no copy-back exists - so the call is skipped there.
-    if (o->mem) { extern void vk_pool_set_flags(const void *, int) __attribute__((weak));
+    if (o->mem) {
+#if defined(__APPLE__)
+        extern void vk_pool_set_flags(const void *, int) __attribute__((weak_import));
+#else
+        extern void vk_pool_set_flags(const void *, int) __attribute__((weak));
+#endif
         if (vk_pool_set_flags) vk_pool_set_flags(o->mem, o->flags); }
     if (o->mem && !(o->flags & 0x200)) dm_device_share(share_mem, o->size, 1);   // the GPU maps the storage: the host refuses to unmap it until Finalize, as Horizon does (hle_svc.c)
     if (!o->mem && !(o->flags & 0x200)) LOG("[RED] MemoryPoolInitialize: non-virtual pool has no storage flags=%#x size=%#llx", o->flags, o->size);
