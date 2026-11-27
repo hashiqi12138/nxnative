@@ -208,8 +208,8 @@ def classify(stage, b, res):
             if b['count'] > 1 or b['count'] == 0:   # an array of c2 handles indexed at run time: element k = the handle at off + 8k
                 e.update(kind='tex_c2a', off=o0 * 4 if ty == 0 else None); return e
             tw = [o0] if ty == 3 else words
-            t = next((slot(x, TEX_BASE, tb) for x in tw if slot(x, TEX_BASE, tb) is not None and x * 4 < SEPTEX_BASE), None)
-            if t is None: t = next((SEPTEX_SLOT0 + slot(x, SEPTEX_BASE, tb) for x in tw if slot(x, SEPTEX_BASE, tb) is not None and x * 4 < SAMP_BASE), None)
+            t = next((v for x in tw if (v := slot(x, TEX_BASE, tb)) is not None and x * 4 < SEPTEX_BASE), None)
+            if t is None: t = next((SEPTEX_SLOT0 + v for x in tw if (v := slot(x, SEPTEX_BASE, tb)) is not None and x * 4 < SAMP_BASE), None)
             e.update(kind='tbuf' if b['type'] == 'tbuf' else 'tex', reg=t)
             if ty == 3: e['samp_id'] = o1
             elif ty: e['samp'] = next((slot(x, SAMP_BASE, sb) for x in words if x * 4 >= SAMP_BASE and slot(x, SAMP_BASE, sb) is not None), None)
@@ -249,7 +249,7 @@ def refl_bin(binds, c1, local):
     return b''.join(out) + bytes(c1)
 
 def main():
-    pc, loc = {}, {}
+    loc = {}
     for ln in open(MAP, encoding='utf-8'):
         c = ln.rstrip('\n').split('\t')
         if len(c) > 4 and c[0].endswith('.bin'): loc.setdefault(c[3], (c[0], int(c[1])))

@@ -28,7 +28,6 @@ import struct
 import subprocess
 import sys
 import tarfile
-import tempfile
 
 MAGIC = b'NXPK'
 VERSION = 1

@@ -20,7 +20,7 @@ for line in open(src, encoding='utf-8'):
     code = code.replace('.private_extern', '.hidden')
     # the C build is -fvisibility=hidden; match it for assembly globals so they are non-preemptible (adrp PC-relative is then allowed in the shared lib)
     code = re.sub(r'^(\s*)\.globl\s+' + SYM + r'[ \t]*$', lambda m: f'{m.group(1)}.globl {m.group(2)}\n{m.group(1)}.hidden {m.group(2)}', code)
-    for pat, rep in SECTIONS: code = re.sub(r'^(\s*)' + pat, lambda m: m.group(1) + rep, code)
+    for pat, rep in SECTIONS: code = re.sub(r'^(\s*)' + pat, lambda m, rep=rep: m.group(1) + rep, code)
     code = re.sub(r'(\.globl\s+|\.hidden\s+|\b(?:bl|b|b\.\w+|cbz\s+\w+,|cbnz\s+\w+,|tbz\s+\w+,\s*#\d+,|tbnz\s+\w+,\s*#\d+,|adr\s+\w+,)\s*)' + SYM + r'\b', r'\1\2', code)
     code = re.sub(r'^(\s*)' + SYM + r':', r'\1\2:', code)   # label definitions
     code = re.sub(r'(\.(?:quad|word|xword|8byte)\s+)' + SYM + r'\b', r'\1\2', code)   # data references

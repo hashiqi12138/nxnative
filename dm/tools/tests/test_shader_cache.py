@@ -745,7 +745,9 @@ class Compression(Base):
         self.store.db.execute('UPDATE blob SET payload=?', (b'bad zstd',))
         SERVED = shader_cache.Served(self.store, 1)
         def check_worker():
+            assert SERVED is not None
             remote = SERVED.worker()
+            assert remote is not None
             assert remote.get('metallib/mac/bad.metallib') is None
             remote.put('metallib/mac/ok.metallib', payload)
             assert remote.get('metallib/mac/ok.metallib') == payload

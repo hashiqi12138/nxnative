@@ -330,13 +330,16 @@ class _PathOps:
         """The path relative to start, with '/' when both are inside an image: shader_split.py builds each shader's
         source column as relpath(dirpath, romfs), and a Windows relpath hands back 'Content\\Effects\\Border.xnb',
         which is not the name the profile's tables hold (they were split on a Mac)."""
-        if isinstance(path, str) and _resolve(path):
-            rp = _resolve(path)[1]
-            if start is None: return rp or '.'
-            rs = _resolve(start)[1] if isinstance(start, str) and _resolve(start) else None
-            if rs is not None:
-                if not rs: return rp or '.'
-                return rp[len(rs) + 1:] if rp.startswith(rs + '/') else rp
+        if isinstance(path, str):
+            resolved = _resolve(path)
+            if resolved:
+                rp = resolved[1]
+                if start is None: return rp or '.'
+                resolved_start = _resolve(start) if isinstance(start, str) else None
+                rs = resolved_start[1] if resolved_start else None
+                if rs is not None:
+                    if not rs: return rp or '.'
+                    return rp[len(rs) + 1:] if rp.startswith(rs + '/') else rp
         return _os.path.relpath(path, start) if start is not None else _os.path.relpath(path)
     def __getattr__(self, name): return getattr(_os.path, name)
 class _OS:

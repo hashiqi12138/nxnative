@@ -224,7 +224,8 @@ def main():
             if self.path == '/list':
                 # What the library shows: every container the server holds, by name. The app asks this when its
                 # source is set to this server, then downloads one with /packs/<file>.
-                items = scan_games(games) if games else ([dict(pack_info(nxpk), url='/pack.nxpk')] if nxpk else [])
+                info = pack_info(nxpk) if nxpk else None
+                items = scan_games(games) if games else ([dict(info, url='/pack.nxpk')] if info else [])
                 body = json.dumps([dict(i, url=i.get('url') or '/packs/' + i['file']) for i in items]).encode()
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
