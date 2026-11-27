@@ -1,5 +1,9 @@
 # Fire Emblem Engage (0100A6301214E000): the rewriter's patches of this game's own builds. dm/tools/patch_nso.py loads every profile's patches.py and applies those of a module's NSO build ID;
 # CUTS, OBS and FRAME_STEP as described there ("Registered patches"). Patches of Nintendo SDK module builds are in dm/tools/sdk_patches.py
+BINDING = [
+    {'what': 'build-bound game patches', 'now': 'build', 'goal': 'unreviewed', 'purpose': 'runtime',
+     'why': 'introduced during game bring-up; the binding goals have not been reviewed'},
+]
 CUTS = {
   # Fire Emblem Engage 2.0.0 (v327680) main: run the game's own 60 fps path (vertical sync count always 1).
   # The game's time class App.GameTime picks a vertical sync count per scene (Slow = 2, i.e. 30 fps: system, movies, demos, combat cutscenes, the hub; Normal is 1 only when GameConfig.IsPerformance)

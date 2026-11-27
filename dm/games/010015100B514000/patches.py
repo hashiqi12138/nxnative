@@ -1,5 +1,9 @@
 # Super Mario Bros. Wonder (010015100B514000): the rewriter's patches of this game's own builds. dm/tools/patch_nso.py loads every profile's patches.py and applies those of a module's NSO build ID;
 # CUTS, OBS and FRAME_STEP as described there ("Registered patches"). Patches of Nintendo SDK module builds are in dm/tools/sdk_patches.py
+BINDING = [
+    {'what': 'resource heap size increased by 16 KB', 'now': 'build', 'goal': 'unreviewed', 'purpose': 'memory',
+     'why': 'the resource descriptor did not fit after the final GPU chunk on the reviewed main builds'},
+]
 CUTS = {
   # Super Mario Bros. Wonder v0 main
   'cd6e42aee7934f4d8393cd43893ae25e': [

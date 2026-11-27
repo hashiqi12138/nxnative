@@ -42,38 +42,40 @@
          buffer[:len(data)] = data; self.pos += len(data)
          return len(data)
      def close(self):
-@@ -236,6 +255,18 @@
+@@ -234,8 +253,16 @@
+ 
+ 
  def walk(top, topdown=True, onerror=None, followlinks=False):
-     if not _resolve(top):
+-    if not _resolve(top):
++    resolved_top = _resolve(top)
++    if not resolved_top:
          yield from _os.walk(top, topdown=topdown, onerror=onerror, followlinks=followlinks); return
++    image, relative = resolved_top
++    root = str(image.path) + ('/' + relative if relative else '')
 +    # A path inside an image is the image's own, and the image stores '/' whatever the host uses. Yielding the
 +    # platform path made shader_split.py name every source '/Content\Effects\Border.xnb', which the profile's
 +    # tables (split on a Mac) do not have, and moved 24 shaders from ps_content.bin to ps_other.bin - the same
 +    # content hashes under different names (measured 2026-11-16). Only the image's part is translated; a path
 +    # outside any image keeps its platform form.
-+    def shown(path):
-+        # DM_OHOS: an image's own path uses '/'
-+        resolved = _resolve(path)
-+        if not resolved: return str(path)
-+        image, relative = resolved
-+        if not relative: return str(path)
-+        return str(image.path) + '/' + relative
      def visit(path):
          try:
              dirs, files = [], []
-@@ -244,9 +275,9 @@
+@@ -244,10 +271,10 @@
          except OSError as error:
              if onerror: onerror(error)
              return
 -        if topdown: yield str(path), dirs, files
-+        if topdown: yield shown(path), dirs, files
-         for name in dirs: yield from visit(_os.path.join(path, name))
+-        for name in dirs: yield from visit(_os.path.join(path, name))
 -        if not topdown: yield str(path), dirs, files
-+        if not topdown: yield shown(path), dirs, files
-     yield from visit(top)
+-    yield from visit(top)
++        if topdown: yield path, dirs, files
++        for name in dirs: yield from visit(path + '/' + name)
++        if not topdown: yield path, dirs, files
++    yield from visit(root)
  
  
-@@ -280,6 +311,28 @@
+ class Path(type(_Path())):
+@@ -285,6 +312,31 @@
  class _PathOps:
      exists = staticmethod(exists); isdir = staticmethod(isdir); isfile = staticmethod(isfile)
      getsize = staticmethod(lambda path: stat(path).st_size)
@@ -91,13 +93,16 @@
 +        """The path relative to start, with '/' when both are inside an image: shader_split.py builds each shader's
 +        source column as relpath(dirpath, romfs), and a Windows relpath hands back 'Content\\Effects\\Border.xnb',
 +        which is not the name the profile's tables hold (they were split on a Mac)."""
-+        if isinstance(path, str) and _resolve(path):
-+            rp = _resolve(path)[1]
-+            if start is None: return rp or '.'
-+            rs = _resolve(start)[1] if isinstance(start, str) and _resolve(start) else None
-+            if rs is not None:
-+                if not rs: return rp or '.'
-+                return rp[len(rs) + 1:] if rp.startswith(rs + '/') else rp
++        if isinstance(path, str):
++            resolved = _resolve(path)
++            if resolved:
++                rp = resolved[1]
++                if start is None: return rp or '.'
++                resolved_start = _resolve(start) if isinstance(start, str) else None
++                rs = resolved_start[1] if resolved_start else None
++                if rs is not None:
++                    if not rs: return rp or '.'
++                    return rp[len(rs) + 1:] if rp.startswith(rs + '/') else rp
 +        return _os.path.relpath(path, start) if start is not None else _os.path.relpath(path)
      def __getattr__(self, name): return getattr(_os.path, name)
  class _OS:

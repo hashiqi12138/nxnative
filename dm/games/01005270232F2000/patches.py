@@ -1,5 +1,9 @@
 # OCTOPATH TRAVELER 0 (01005270232F2000): the rewriter's patches of this game's own builds. dm/tools/patch_nso.py loads every profile's patches.py and applies those of a module's NSO build ID;
 # CUTS, OBS and FRAME_STEP as described there ("Registered patches"). Patches of Nintendo SDK module builds are in dm/tools/sdk_patches.py
+BINDING = [
+    {'what': 'build-bound game patches', 'now': 'build', 'goal': 'unreviewed', 'purpose': 'runtime',
+     'why': 'introduced during game bring-up; the binding goals have not been reviewed'},
+]
 CUTS = {
   # Octopath Traveler 0 1.0.5 (v327680) main: Unreal's nninitStartup (main+0x12d74) constructs the engine allocator, an FMallocBinned3, in place at main+0x68022c8 (main+0x12e40 → constructor
   # main+0x9f480). Its constructor reserves 37 GB of address space (main+0x9f748: 74 pools of 512 MB, pool index = offset >> 29), which only the Mac can give: an iPhone has about 5 GB without the

@@ -30,7 +30,7 @@
  #define DM_SWITCH_ALIAS  UINT64_C(0x1000000000)   // a Switch's alias region: 64 GB
  #define DM_SWITCH2_ALIAS UINT64_C(0x2000000000)   // a Switch 2's alias region on Mac: 128 GB (holds two 60 GB reservations, e.g. Xenoblade Chronicles 2 Switch 2 Edition)
  // The alias region this run gets: on the Mac, at least the console's alias region (64 GB for Switch 1, 128 GB for Switch 2 when ounce is set);
-@@ -115,7 +136,11 @@
+@@ -116,7 +137,11 @@
      uint64_t image_size, file_image_len, patch_len;   // only with the patch area before the base: whole image (with bss and key page), length of the image part of the file, patch area length
      uint64_t back_off, back_len;   // a second patch area after the image (patch_nso.py TWO: a text longer than a B reaches), inside size; 0 = none
      char build_id[33];         // First 16 bytes of the NSO build ID (hex); empty for older build outputs
@@ -42,7 +42,7 @@
      const Elf64_Dyn *dyn;
      const Elf64_Sym *symtab;
      const char *strtab;
-@@ -139,6 +164,15 @@
+@@ -140,6 +165,15 @@
  static inline const char *dm_main_build(void) { for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) return g_mod[i].build_id; return ""; }
  // Four thread-local slots: K18 = the Switch's x18, KTLS = tpidr_el0, KTLR = tpidrro_el0 (ThreadLocalRegion), KGATE = host gate entry; the actual key numbers are written into the key page by the loader
  extern pthread_key_t g_key18, g_keytls, g_keytlr, g_keygate;

@@ -21,13 +21,13 @@ A patch's binding is what its correctness is anchored to, from the loosest. A pa
 
 ## Gaps
 
-Every patch bound tighter than it could be: the open gaps, then the blocked, kept and unreviewed ones; in each, those reaching the most games first (the games whose profiles register the builds it touches), then those farthest from their goal.
+Every patch bound tighter than it could be: the open gaps, then the blocked, kept and unreviewed ones; in each, those reaching the most games first (the games whose profiles register the builds it touches), then those farthest from their goal. 3 patches have no reviewed goal yet.
 
 | Now → goal | Patch | Purpose | Status | Evidence | Games | Where | Why |
 |---|---|---|---|---|---|---|---|
 | `game` → `host` | CPU-written textures uploaded after a flush | rendering | gap | judgement | 14 | `tex_flush_upload`: [FINAL FANTASY TACTICS - The Ivalice Chronicles](../../dm/games/010038B015560000/README.md), [Ghost Trick: Phantom Detective](../../dm/games/010029B018432000/README.md), [Hyrule Warriors: Age of Calamity](../../dm/games/01002B00111A2000/README.md), [Kirby Air Riders](../../dm/games/040077201BE50000/README.md), [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md), [NieR:Automata The End of YoRHa Edition (010056B015FE8000)](../../dm/games/010056B015FE8000/README.md), [NieR:Automata The End of YoRHa Edition (0100B8E016F76000)](../../dm/games/0100B8E016F76000/README.md), [OCTOPATH TRAVELER](../../dm/games/010057D006492000/README.md), [Resident Evil](../../dm/games/010050F00BC1A000/README.md), [SD GUNDAM G GENERATION CROSS RAYS](../../dm/games/010055700CEA8000/README.md), [The Great Ace Attorney Chronicles](../../dm/games/010036E00FB20000/README.md), [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md), [The Legend of Zelda: Tears of the Kingdom](../../dm/games/0100F2C0115B6000/README.md), [Yoshi's Crafted World](../../dm/games/01006000040C2000/README.md) | unified memory semantics; off by default because a flushed range could cover an image a shader writes: tracking GPU writes would make it safe for every game |
 | `game` → `host` | CPU-written textures uploaded without a flush | rendering | gap | judgement | 13 | `tex_dirty_upload`: [FINAL FANTASY TACTICS - The Ivalice Chronicles](../../dm/games/010038B015560000/README.md), [Ghost Trick: Phantom Detective](../../dm/games/010029B018432000/README.md), [Kirby Air Riders](../../dm/games/040077201BE50000/README.md), [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md), [NieR:Automata The End of YoRHa Edition (010056B015FE8000)](../../dm/games/010056B015FE8000/README.md), [NieR:Automata The End of YoRHa Edition (0100B8E016F76000)](../../dm/games/0100B8E016F76000/README.md), [OCTOPATH TRAVELER](../../dm/games/010057D006492000/README.md), [Resident Evil](../../dm/games/010050F00BC1A000/README.md), [SD GUNDAM G GENERATION CROSS RAYS](../../dm/games/010055700CEA8000/README.md), [The Great Ace Attorney Chronicles](../../dm/games/010036E00FB20000/README.md), [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md), [The Legend of Zelda: Tears of the Kingdom](../../dm/games/0100F2C0115B6000/README.md), [Yoshi's Crafted World](../../dm/games/01006000040C2000/README.md) | as tex_flush_upload, for pools the CPU writes without a flush |
-| `game` → `host` | MapPhysicalMemory limited to the application pool | memory | gap | judgement | 6 | `mem_map_limit`: [Pokémon Legends: Z-A](../../dm/games/0100F43008C44000/README.md), [Pokémon Scarlet](../../dm/games/0100A3D008C5C000/README.md), [Pokémon Violet](../../dm/games/01008F6008C5E000/README.md), [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md), [Xenoblade Chronicles 3](../../dm/games/010074F013262000/README.md), [Xenoblade Chronicles X: Definitive Edition](../../dm/games/0100453019AA8000/README.md) | Horizon's limit; off by default because Ace Attorney Investigations Collection maps a little more than its profile's 1 GB pool, which is the thing to fix |
+| `game` → `host` | MapPhysicalMemory limited to the application pool | memory | gap | judgement | 7 | `mem_map_limit`: [Graveyard Keeper 2](../../dm/games/0100005027A18000/README.md), [Pokémon Legends: Z-A](../../dm/games/0100F43008C44000/README.md), [Pokémon Scarlet](../../dm/games/0100A3D008C5C000/README.md), [Pokémon Violet](../../dm/games/01008F6008C5E000/README.md), [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md), [Xenoblade Chronicles 3](../../dm/games/010074F013262000/README.md), [Xenoblade Chronicles X: Definitive Edition](../../dm/games/0100453019AA8000/README.md) | Horizon's limit; off by default because Ace Attorney Investigations Collection maps a little more than its profile's 1 GB pool, which is the thing to fix |
 | `game` → `host` | buffer-texture handles indexed through c2's tables | shaders | gap | judgement | 5 | `tex_dyn_slots`: [CAPTAIN TSUBASA 2: WORLD FIGHTERS](../../dm/games/01009720213B0000/README.md), [FINAL FANTASY RESONANCE](../../dm/games/0100606026F12000/README.md), [FINAL FANTASY RESONANCE (Asian release)](../../dm/games/0100B8A026F14000/README.md), [Minecraft Dungeons II](../../dm/games/0100A7C01B792000/README.md), [OCTOPATH TRAVELER 0](../../dm/games/01005270232F2000/README.md) | right only where the handle comes from c2's tables: the translator could prove that per shader |
 | `game` → `host` | StandardAllocator blocks of 64 KB and more aligned to 64 KB | memory | gap | judgement | 5 | `alloc_big_align`: [13 Sentinels: Aegis Rim](../../dm/games/01003FC01670C000/README.md), [13 Sentinels: Aegis Rim (Asia)](../../dm/games/01008D7016438000/README.md), [13 Sentinels: Aegis Rim (Japan)](../../dm/games/010045C014650000/README.md), [Unicorn Overlord](../../dm/games/010069401ADB8000/README.md), [Unicorn Overlord (Asia)](../../dm/games/010054B01AD92000/README.md) | the cause is a memory pool's GPU address, big-page aligned on hardware and the CPU address here: pool GPU addresses aligned as hardware does, or this alignment for every game |
 | `build` → `host` | record-time copy of CPU staging bytes at one verified buffer-to-texture upload site | rendering | gap | judgement | 1 | `tex_copy_staging`: [Catherine: Full Body](../../dm/games/0100BF00112C0000/README.md) | a main build ID and return address identify one CPU upload site because NVN also supports GPU-written buffer-to-texture copies; tracking GPU-written ranges would make staging capture general |
@@ -60,11 +60,15 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | `build` → `game` | 60 fps frame step (112 sites) | frame rate | kept: 1.0.1 (2019) is the last update; a function match would serve no other build of this game | checked: nso_fnmap of its 112 sites into those four mains (2026-11-09) | 1 | [ASTRAL CHAIN](../../dm/games/01007300020FA000/README.md) | the game's own clock and timers (a community 60 fps mod on the host's frame step). PlatinumGames' other games do not share them: none of its 15 functions has an exact match in Bayonetta, Bayonetta 2, Bayonetta 3 or NieR:Automata |
 | `build` → `game` | 60 fps frame step and render scale (ksys::VFR) | frame rate | kept: 44 sites in 34 functions to fingerprint for an update that may not come (1.9.0, the Switch 2 Edition release); convert when a new build appears | checked: nso_fnmap of its 44 sites into those 13 mains (2026-11-09) | 1 | [The Legend of Zelda: Breath of the Wild](../../dm/games/01007EF00011E000/README.md) | the game's own frame code; the frame-step state page is general. No engine sibling shares it: none of its 34 functions has an exact match in Tears of the Kingdom, SMO, MK8D, ACNH, Splatoon 2 / 3, Kirby, Mario Party, Ocarina, Smash, Metroid Dread or Origami King (only the widescreen stubs' sead::PerspectiveProjection functions recur) |
 | `build` → `game` | Hagi coroutine stack region 1 GB → 64 MB | memory | kept: 1.1.4 is the last update; a match over Hagi would serve no other build of this game | checked: the final build 1.1.4 (the only one the profile packs), 2026-11-04 | 1 | [Super Mario 3D All-Stars: Super Mario Sunshine](../../dm/games/010049900F546002/README.md) | a size inside Hagi's own code: nothing the host sees tells a 1 GB reservation it can shrink from one it cannot |
+| `build` → unreviewed | build-bound game patches | runtime | unreviewed | judgement | 7 | [DRAGON QUEST VII Reimagined](../../dm/games/0100A9D01C446000/README.md); [FINAL FANTASY RESONANCE](../../dm/games/0100606026F12000/README.md); [Fire Emblem Engage](../../dm/games/0100A6301214E000/README.md); [Metroid Dread](../../dm/games/010093801237C000/README.md); [OCTOPATH TRAVELER 0](../../dm/games/01005270232F2000/README.md); [Paper Mario: The Origami King](../../dm/games/0100A3900C3E2000/README.md); [Pokémon Legends: Z-A](../../dm/games/0100F43008C44000/README.md) | introduced during game bring-up; the binding goals have not been reviewed |
+| `build` → unreviewed | malloc virtual address region reduced to 2.5 GB | address space | unreviewed | judgement | 1 | [Absolum](../../dm/games/0100A83022A22000/README.md) | the game initializes a 40 GB StandardAllocator region and its largest allocation is the 1.75 GB FNA3D heap |
+| `build` → unreviewed | resource heap size increased by 16 KB | memory | unreviewed | judgement | 1 | [Super Mario Bros. Wonder](../../dm/games/010015100B514000/README.md) | the resource descriptor did not fit after the final GPU chunk on the reviewed main builds |
 
 ## Summary
 
 | Game | Cuts | Gates | Frame-step and stub sites | Function-matched rules | Host rows | Binding |
 |---|---|---|---|---|---|---|
+| [Absolum](#absolum) | 1 | 0 | 0 | 0 | 0 | `build` → unreviewed |
 | [Animal Crossing: New Horizons](#animal-crossing-new-horizons) | 0 | 0 | 14 | 0 | 0 | `build` → `game` |
 | [ASTRAL CHAIN](#astral-chain) | 0 | 0 | 112 | 0 | 0 | `build` → `game` |
 | [Batman: Arkham Knight](#batman-arkham-knight) | 8 | 0 | 0 | 0 | 1 | `build` → `game` ×2 |
@@ -73,7 +77,10 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | [Diablo II: Resurrected](#diablo-ii-resurrected) | 2 | 0 | 0 | 1 | 0 | `game` |
 | [Digimon Story Time Stranger](#digimon-story-time-stranger) | 0 | 0 | 0 | 2 | 0 | `game` |
 | [DRAGON BALL XENOVERSE 2 FOR NINTENDO SWITCH](#dragon-ball-xenoverse-2-for-nintendo-switch) | 0 | 0 | 0 | 3 | 0 | `game` ×2 |
+| [DRAGON QUEST VII Reimagined](#dragon-quest-vii-reimagined) | 1 | 1 | 0 | 0 | 0 | `build` → unreviewed |
+| [FINAL FANTASY RESONANCE](#final-fantasy-resonance) | 1 | 0 | 0 | 0 | 0 | `build` → unreviewed |
 | [FINAL FANTASY TACTICS - The Ivalice Chronicles](#final-fantasy-tactics---the-ivalice-chronicles) | 0 | 0 | 1 | 0 | 0 | `game` |
+| [Fire Emblem Engage](#fire-emblem-engage) | 1 | 0 | 0 | 0 | 0 | `build` → unreviewed |
 | [Fire Emblem: Three Houses](#fire-emblem-three-houses) | 7 | 0 | 0 | 0 | 0 | `build` → `game` |
 | [Hades II](#hades-ii) | 0 | 0 | 1 | 0 | 0 | `game` |
 | [Hyrule Warriors: Age of Calamity](#hyrule-warriors-age-of-calamity) | 0 | 0 | 10 | 0 | 0 | `game`, `build` → `game` |
@@ -82,22 +89,27 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | [Mario + Rabbids® Sparks of Hope](#mario--rabbids-sparks-of-hope) | 1 | 0 | 0 | 0 | 0 | `build` → `game` |
 | [Mario Kart World](#mario-kart-world) | 0 | 0 | 1 | 0 | 0 | `game` |
 | [METAL GEAR SOLID: Peace Walker - Master Collection Version (Game)](#metal-gear-solid-peace-walker---master-collection-version-game) | 0 | 0 | 3 | 0 | 0 | `game` |
+| [Metroid Dread](#metroid-dread) | 0 | 2 | 0 | 0 | 0 | `build` → unreviewed |
 | [Monster Hunter Rise](#monster-hunter-rise) | 0 | 0 | 0 | 0 | 1 | `build` → `engine` |
 | [NARUTO SHIPPUDEN™: Ultimate Ninja® STORM 3 Full Burst](#naruto-shippuden-ultimate-ninja-storm-3-full-burst) | 0 | 0 | 0 | 1 | 0 | `game` |
 | [NARUTO X BORUTO Ultimate Ninja STORM CONNECTIONS](#naruto-x-boruto-ultimate-ninja-storm-connections) | 0 | 0 | 6 | 0 | 0 | `game` |
 | [Need For Speed™ Hot Pursuit Remastered](#need-for-speed-hot-pursuit-remastered) | 1 | 0 | 0 | 0 | 5 | `build` → `game`, `build` → `engine` |
 | [NieR:Automata The End of YoRHa Edition (010056B015FE8000)](#nierautomata-the-end-of-yorha-edition-010056b015fe8000) | 8 | 0 | 0 | 0 | 1 | `build` → `game` ×2 |
 | [NieR:Automata The End of YoRHa Edition (0100B8E016F76000)](#nierautomata-the-end-of-yorha-edition-0100b8e016f76000) | 8 | 0 | 0 | 0 | 1 | `build` → `game` ×2 |
+| [OCTOPATH TRAVELER 0](#octopath-traveler-0) | 1 | 0 | 0 | 0 | 0 | `build` → unreviewed |
 | [Ori and the Will of the Wisps](#ori-and-the-will-of-the-wisps) | 0 | 0 | 10 | 0 | 0 | `build` → `engine` |
+| [Paper Mario: The Origami King](#paper-mario-the-origami-king) | 2 | 0 | 1 | 0 | 0 | `build` → unreviewed |
 | [Paper Mario: The Thousand-Year Door](#paper-mario-the-thousand-year-door) | 1 | 0 | 1 | 0 | 0 | `build` → `game` |
 | [Persona 5 Strikers](#persona-5-strikers) | 0 | 0 | 0 | 1 | 0 | `game` |
 | [Pikmin 4](#pikmin-4) | 0 | 0 | 1 | 0 | 0 | `build` → `game` |
 | [Pokémon Legends: Arceus](#pokémon-legends-arceus) | 0 | 0 | 0 | 1 | 0 | `game` |
+| [Pokémon Legends: Z-A](#pokémon-legends-z-a) | 1 | 0 | 0 | 0 | 0 | `build` → unreviewed |
 | [Pokémon: Let's Go, Eevee!](#pokémon-lets-go-eevee) | 0 | 0 | 0 | 1 | 0 | `game` |
 | [Pokémon: Let's Go, Pikachu!](#pokémon-lets-go-pikachu) | 0 | 0 | 0 | 1 | 0 | `game` |
 | [South Park: The Fractured But Whole](#south-park-the-fractured-but-whole) | 0 | 0 | 0 | 1 | 0 | `game` → `engine` |
 | [South Park: The Stick of Truth](#south-park-the-stick-of-truth) | 0 | 0 | 0 | 1 | 0 | `game` |
 | [Super Mario 3D All-Stars: Super Mario Sunshine](#super-mario-3d-all-stars-super-mario-sunshine) | 2 | 0 | 0 | 0 | 0 | `build` → `game` |
+| [Super Mario Bros. Wonder](#super-mario-bros-wonder) | 2 | 0 | 0 | 0 | 0 | `build` → unreviewed |
 | [Super Smash Bros. Ultimate](#super-smash-bros-ultimate) | 11 | 0 | 0 | 1 | 0 | `game` |
 | [Taiko Risshiden V DX](#taiko-risshiden-v-dx) | 1 | 0 | 0 | 2 | 0 | `game` |
 | [Teenage Mutant Ninja Turtles: Shredder's Revenge](#teenage-mutant-ninja-turtles-shredders-revenge) | 0 | 0 | 0 | 1 | 0 | `game` |
@@ -110,6 +122,15 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 | [Xenoblade Chronicles X: Definitive Edition](#xenoblade-chronicles-x-definitive-edition) | 6 | 0 | 1 | 1 | 0 | `game` ×2 |
 
 ## Games
+
+### Absolum
+
+[Absolum](../../dm/games/0100A83022A22000/README.md), `0100A83022A22000`, [patches.py](../../dm/games/0100A83022A22000/patches.py).
+
+- **`build` → unreviewed**, address space, unreviewed, judgement: malloc virtual address region reduced to 2.5 GB. The game initializes a 40 GB StandardAllocator region and its largest allocation is the 1.75 GB FNA3D heap
+
+- **1.1.1 `main`** `916f5b8d…` ([patches.py:11](../../dm/games/0100A83022A22000/patches.py#L11))
+  - cut `+0x28bff4`: malloc region size: mov x0,#0xa00000000 → mov x0,#0xa0000000 (40 GB → 2.5 GB of address space)
 
 ### Animal Crossing: New Horizons
 
@@ -333,6 +354,25 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 - **function-matched** (`main` of builds without CUTS): Use Xenoverse 2 full-rate timing: 1 function, 3 cuts
 - **function-matched** (`main` of builds without CUTS): Keep the incoming base rate in Conton City: 1 function, 1 cut
 
+### DRAGON QUEST VII Reimagined
+
+[DRAGON QUEST VII Reimagined](../../dm/games/0100A9D01C446000/README.md), `0100A9D01C446000`, [patches.py](../../dm/games/0100A9D01C446000/patches.py).
+
+- **`build` → unreviewed**, runtime, unreviewed, judgement: build-bound game patches. Introduced during game bring-up; the binding goals have not been reviewed
+
+- **1.2.0 `main`** `f7ec03e4…` ([patches.py:13](../../dm/games/0100A9D01C446000/patches.py#L13))
+  - cut `+0x32758dc`: GCreateMalloc: bl 0x291714 (FMallocBinned3 constructor, 37 GB of address space) → nop; the host allocator's vtable is put in at the gate after it (hle_uemalloc.c)
+  - gate 21 at `+0x32758e4`: GCreateMalloc: the allocator object is in x19, before it is used: the host puts its vtable in; orig mov x0, x19
+
+### FINAL FANTASY RESONANCE
+
+[FINAL FANTASY RESONANCE](../../dm/games/0100606026F12000/README.md), `0100606026F12000`, [patches.py](../../dm/games/0100606026F12000/patches.py).
+
+- **`build` → unreviewed**, runtime, unreviewed, judgement: build-bound game patches. Introduced during game bring-up; the binding goals have not been reviewed
+
+- **1.0.1 `main`** `84e182f7…` ([patches.py:13](../../dm/games/0100606026F12000/patches.py#L13))
+  - cut `+0x137f0`: nninitStartup: bl 0xae770 (FMallocBinned3 constructor, 38 GB of address space) → nop; the host allocator is in the object already (hle_uemalloc.c)
+
 ### FINAL FANTASY TACTICS - The Ivalice Chronicles
 
 [FINAL FANTASY TACTICS - The Ivalice Chronicles](../../dm/games/010038B015560000/README.md), `010038B015560000`, [patches.py](../../dm/games/010038B015560000/patches.py).
@@ -340,6 +380,15 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 - **`game`**, race, at goal, checked: 1.0.0 (v0) and 1.4.0 (v393216) mains: complete signal wrapper, submit caller, queue push and wait wrapper verified by disassembly, rewrite and instruction replay (2026-11-23): job pool wake-up. A lost wake-up in the game's own job pool, not a host or SDK difference; function-matched (MATCH_STUBS) across updates via its submit caller and wait wrapper
 
 - **function-matched stub** (`main` of builds without STUBS): job pool wake-up: a function of 0x8 bytes, `+0x0` in it
+
+### Fire Emblem Engage
+
+[Fire Emblem Engage](../../dm/games/0100A6301214E000/README.md), `0100A6301214E000`, [patches.py](../../dm/games/0100A6301214E000/patches.py).
+
+- **`build` → unreviewed**, runtime, unreviewed, judgement: build-bound game patches. Introduced during game bring-up; the binding goals have not been reviewed
+
+- **2.0.0 `main`** `8c08b971…` ([patches.py:15](../../dm/games/0100A6301214E000/patches.py#L15))
+  - cut `+0x32f92d4`: QualitySettings.set_vSyncCount wrapper: argument mov w19,w0 → mov w19,#1 (the 60 fps path of the game itself)
 
 ### Fire Emblem: Three Houses
 
@@ -422,6 +471,16 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 
 - **function-matched stub** (`main` of builds without STUBS): render-thread synchronization: a function of 0x1a4 bytes, `+0x18`, `+0x190` in it
 
+### Metroid Dread
+
+[Metroid Dread](../../dm/games/010093801237C000/README.md), `010093801237C000`, [patches.py](../../dm/games/010093801237C000/patches.py).
+
+- **`build` → unreviewed**, runtime, unreviewed, judgement: build-bound game patches. Introduced during game bring-up; the binding goals have not been reviewed
+
+- **2.1.0 `main`** `646761f6…` ([patches.py:10](../../dm/games/010093801237C000/patches.py#L10))
+  - gate 19 at `+0x2247a4`: link request posted (loop at main+0x224728, x19 = request ring): wait for the dispatcher; orig add x22, x22, #8
+  - gate 20 at `+0x2248e4`: unlink request posted (loop at main+0x224868, x19 = request ring): wait for the dispatcher before the object is freed; orig add x22, x22, #8
+
 ### Monster Hunter Rise
 
 [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md), `0100B04011742000`.
@@ -501,6 +560,15 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
   - launcher capabilities: DYNAMIC_RESOLUTION
   - host [hle_fpslock.c:66](../../dm/host/hle_fpslock.c#L66): frame interval and dynamic-resolution floor
 
+### OCTOPATH TRAVELER 0
+
+[OCTOPATH TRAVELER 0](../../dm/games/01005270232F2000/README.md), `01005270232F2000`, [patches.py](../../dm/games/01005270232F2000/patches.py).
+
+- **`build` → unreviewed**, runtime, unreviewed, judgement: build-bound game patches. Introduced during game bring-up; the binding goals have not been reviewed
+
+- **1.0.5 `main`** `9fe60a21…` ([patches.py:13](../../dm/games/01005270232F2000/patches.py#L13))
+  - cut `+0x12e40`: nninitStartup: bl 0x9f480 (FMallocBinned3 constructor, 37 GB of address space) → nop; the host allocator is in the object already (hle_uemalloc.c)
+
 ### Ori and the Will of the Wisps
 
 [Ori and the Will of the Wisps](../../dm/games/01008DD013200000/README.md), `01008DD013200000`, [patches.py](../../dm/games/01008DD013200000/patches.py).
@@ -518,6 +586,17 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
   - stub `+0x34f80`: Unity's constant-buffer table: register a layout and its members (main thread) on the shared device under the registry mutex
   - stub `+0x353c0`: Unity's constant-buffer table: look up a member (main thread) on the shared device under the registry mutex
   - stub `+0x35510`: Unity's constant-buffer table: write a buffer's values (render thread) on the shared device under the registry mutex
+
+### Paper Mario: The Origami King
+
+[Paper Mario: The Origami King](../../dm/games/0100A3900C3E2000/README.md), `0100A3900C3E2000`, [patches.py](../../dm/games/0100A3900C3E2000/patches.py).
+
+- **`build` → unreviewed**, runtime, unreviewed, judgement: build-bound game patches. Introduced during game bring-up; the binding goals have not been reviewed
+
+- **1.0.1 `main`** `e74395f0…` ([patches.py:11](../../dm/games/0100A3900C3E2000/patches.py#L11))
+  - cut `+0x5beb1c`: present interval ldr w2,[x19,x8] (field +0x71dc) → mov w2,#1
+  - cut `+0x43ea9c`: frame step floor in 60 Hz vsyncs: mov w9,#2 → mov w9,#1 (the game steps by the vsyncs that passed, down to one)
+  - frame step `+0x43eb04`: frame step: the base clock steps by the host's vsyncs (state page target fps; 0 = the game's measured step)
 
 ### Paper Mario: The Thousand-Year Door
 
@@ -553,6 +632,15 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 - **`game`**, runtime, at goal, checked: function-matched on 1.1.1, the only build on hand: exactly one match, a boot to the field setup, and the patched function run on the module's own bytes in a small interpreter for both null paths. Issue #712's reporters ran the earlier cuts for about 7 hours with no crash; the path itself has not been reached with these cuts: capture demo: the empty result when the weak reference at +0x88 is unset or dead. The game's own function dereferences its own weak reference; no host service is on the path, so no host or engine rule can hold it. Whether another Game Freak game shares the function is unchecked
 
 - **function-matched** (`main` of builds without CUTS): capture demo: the empty result when the weak reference at +0x88 is unset or dead: 1 function, 5 cuts
+
+### Pokémon Legends: Z-A
+
+[Pokémon Legends: Z-A](../../dm/games/0100F43008C44000/README.md), `0100F43008C44000`, [patches.py](../../dm/games/0100F43008C44000/patches.py).
+
+- **`build` → unreviewed**, runtime, unreviewed, judgement: build-bound game patches. Introduced during game bring-up; the binding goals have not been reviewed
+
+- **2.0.2 `main`** `b1f12fd9…` ([patches.py:11](../../dm/games/0100F43008C44000/patches.py#L11))
+  - cut `+0x1b3e3e4`: StandardAllocator::Initialize(nullptr, size): address space mov x2,#0x300000000 → mov x2,#0x100000000 (12 GB → 4 GB)
 
 ### Pokémon: Let's Go, Eevee!
 
@@ -595,6 +683,17 @@ Every patch bound tighter than it could be: the open gaps, then the blocked, kep
 - **1.1.4 `main`** `b21e3733…` ([patches.py:7](../../dm/games/010049900F546002/patches.py#L7))
   - cut `+0x151214`: coroutine stack region size: orr w2,wzr,#0x40000000 → mov w2,#0x4000000 (1 GB → 64 MB)
   - cut `+0x151398`: coroutine stack region size, the other start path: 1 GB → 64 MB
+
+### Super Mario Bros. Wonder
+
+[Super Mario Bros. Wonder](../../dm/games/010015100B514000/README.md), `010015100B514000`, [patches.py](../../dm/games/010015100B514000/patches.py).
+
+- **`build` → unreviewed**, memory, unreviewed, judgement: resource heap size increased by 16 KB. The resource descriptor did not fit after the final GPU chunk on the reviewed main builds
+
+- **1.0.0 `main`** `cd6e42ae…` ([patches.py:9](../../dm/games/010015100B514000/patches.py#L9))
+  - cut `+0x1e62fc`: resource heap size: mov x0,x23 → add x0,x23,#0x4000 (ExpHeap::create size argument +16 KB)
+- **1.2.1 `main`** `ff773e90…` ([patches.py:17](../../dm/games/010015100B514000/patches.py#L17))
+  - cut `+0x1cf9b0`: resource heap size: mov x0,x23 → add x0,x23,#0x4000 (ExpHeap::create size argument +16 KB)
 
 ### Super Smash Bros. Ultimate
 
@@ -840,11 +939,11 @@ Profile keys (`game.tsv`) whose value changes what the host does, set away from 
 | `alloc_big_align on` | [13 Sentinels: Aegis Rim](../../dm/games/01003FC01670C000/README.md), [13 Sentinels: Aegis Rim (Asia)](../../dm/games/01008D7016438000/README.md), [13 Sentinels: Aegis Rim (Japan)](../../dm/games/010045C014650000/README.md), [Unicorn Overlord](../../dm/games/010069401ADB8000/README.md), [Unicorn Overlord (Asia)](../../dm/games/010054B01AD92000/README.md) | `game` → `host`, gap | the cause is a memory pool's GPU address, big-page aligned on hardware and the CPU address here: pool GPU addresses aligned as hardware does, or this alignment for every game |
 | `stdalloc_cap 0x80000000` | [A Little to the Left](../../dm/games/0100354017668000/README.md), [Ace Angler: Fishing Spirits](../../dm/games/01007C50132C8000/README.md), [Advance Wars 1+2: Re-Boot Camp](../../dm/games/0100300012F2A000/README.md), [FINAL FANTASY V](../../dm/games/0100AA201415C000/README.md), [Pokémon Brilliant Diamond](../../dm/games/0100000011D90000/README.md) | `game`, at goal | what the regions after it need, measured by the NSP script's region check, or 1 GB from its heap check; the host's cap is the default |
 | `tex_dyn_slots on` | [CAPTAIN TSUBASA 2: WORLD FIGHTERS](../../dm/games/01009720213B0000/README.md), [FINAL FANTASY RESONANCE](../../dm/games/0100606026F12000/README.md), [FINAL FANTASY RESONANCE (Asian release)](../../dm/games/0100B8A026F14000/README.md), [Minecraft Dungeons II](../../dm/games/0100A7C01B792000/README.md), [OCTOPATH TRAVELER 0](../../dm/games/01005270232F2000/README.md) | `game` → `host`, gap | right only where the handle comes from c2's tables: the translator could prove that per shader |
-| `mem_map_limit on` | [Pokémon Legends: Z-A](../../dm/games/0100F43008C44000/README.md), [Pokémon Scarlet](../../dm/games/0100A3D008C5C000/README.md), [Pokémon Violet](../../dm/games/01008F6008C5E000/README.md), [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md), [Xenoblade Chronicles 3](../../dm/games/010074F013262000/README.md), [Xenoblade Chronicles X: Definitive Edition](../../dm/games/0100453019AA8000/README.md) | `game` → `host`, gap | Horizon's limit; off by default because Ace Attorney Investigations Collection maps a little more than its profile's 1 GB pool, which is the thing to fix |
+| `mem_map_limit on` | [Graveyard Keeper 2](../../dm/games/0100005027A18000/README.md), [Pokémon Legends: Z-A](../../dm/games/0100F43008C44000/README.md), [Pokémon Scarlet](../../dm/games/0100A3D008C5C000/README.md), [Pokémon Violet](../../dm/games/01008F6008C5E000/README.md), [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md), [Xenoblade Chronicles 3](../../dm/games/010074F013262000/README.md), [Xenoblade Chronicles X: Definitive Edition](../../dm/games/0100453019AA8000/README.md) | `game` → `host`, gap | Horizon's limit; off by default because Ace Attorney Investigations Collection maps a little more than its profile's 1 GB pool, which is the thing to fix |
 | `fps_max 120` | [DRAGON BALL: Sparking! ZERO](../../dm/games/010035F022078000/README.md), [Fire Emblem Fortune's Weave](../../dm/games/04007EF01F8AE000/README.md), [Hollow Knight](../../dm/games/0100633007D48000/README.md), [Hollow Knight: Silksong](../../dm/games/010013C00E930000/README.md), [Mario & Luigi: Brothership](../../dm/games/01006D0017F7A000/README.md), [Minecraft Dungeons II](../../dm/games/0100A7C01B792000/README.md), [Pikmin 4](../../dm/games/0100B7C00933A000/README.md), [The Rogue Prince of Persia](../../dm/games/01008D9022462000/README.md) | `game`, at goal | enabled per game only after verifying its speed at 120 against 60 over the same inputs |
 | `op_mode handheld` | [Balatro](../../dm/games/0100CD801CE5E000/README.md), [Big Brain Academy: Brain vs. Brain](../../dm/games/0100620012D6E000/README.md), [Bridge Constructor Portal](../../dm/games/010016E004796000/README.md), [Captain Toad: Treasure Tracker](../../dm/games/01009BF0072D4000/README.md), [Cytus α](../../dm/games/010063100B2C2000/README.md), [Rhythm Heaven Groove](../../dm/games/0100D9F01D474000/README.md), [stitch.](../../dm/games/010025801CEA8000/README.md), [Super Mario 3D All-Stars: Super Mario Sunshine](../../dm/games/010049900F546002/README.md), [Super Mario Galaxy](../../dm/games/010099C022B96000/README.md), [Super Mario Galaxy 2](../../dm/games/0100FD8022DAA000/README.md), [Taiko Risshiden V DX](../../dm/games/0100346017304000/README.md) | `game`, at goal | the game's controls (handheld: the touch screen instead of a gyro pointer) |
 | `tex_dirty_upload on` | [FINAL FANTASY TACTICS - The Ivalice Chronicles](../../dm/games/010038B015560000/README.md), [Ghost Trick: Phantom Detective](../../dm/games/010029B018432000/README.md), [Kirby Air Riders](../../dm/games/040077201BE50000/README.md), [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md), [NieR:Automata The End of YoRHa Edition (010056B015FE8000)](../../dm/games/010056B015FE8000/README.md), [NieR:Automata The End of YoRHa Edition (0100B8E016F76000)](../../dm/games/0100B8E016F76000/README.md), [OCTOPATH TRAVELER](../../dm/games/010057D006492000/README.md), [Resident Evil](../../dm/games/010050F00BC1A000/README.md), [SD GUNDAM G GENERATION CROSS RAYS](../../dm/games/010055700CEA8000/README.md), [The Great Ace Attorney Chronicles](../../dm/games/010036E00FB20000/README.md), [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md), [The Legend of Zelda: Tears of the Kingdom](../../dm/games/0100F2C0115B6000/README.md), [Yoshi's Crafted World](../../dm/games/01006000040C2000/README.md) | `game` → `host`, gap | as tex_flush_upload, for pools the CPU writes without a flush |
 | `tex_flush_upload on` | [FINAL FANTASY TACTICS - The Ivalice Chronicles](../../dm/games/010038B015560000/README.md), [Ghost Trick: Phantom Detective](../../dm/games/010029B018432000/README.md), [Hyrule Warriors: Age of Calamity](../../dm/games/01002B00111A2000/README.md), [Kirby Air Riders](../../dm/games/040077201BE50000/README.md), [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md), [NieR:Automata The End of YoRHa Edition (010056B015FE8000)](../../dm/games/010056B015FE8000/README.md), [NieR:Automata The End of YoRHa Edition (0100B8E016F76000)](../../dm/games/0100B8E016F76000/README.md), [OCTOPATH TRAVELER](../../dm/games/010057D006492000/README.md), [Resident Evil](../../dm/games/010050F00BC1A000/README.md), [SD GUNDAM G GENERATION CROSS RAYS](../../dm/games/010055700CEA8000/README.md), [The Great Ace Attorney Chronicles](../../dm/games/010036E00FB20000/README.md), [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md), [The Legend of Zelda: Tears of the Kingdom](../../dm/games/0100F2C0115B6000/README.md), [Yoshi's Crafted World](../../dm/games/01006000040C2000/README.md) | `game` → `host`, gap | unified memory semantics; off by default because a flushed range could cover an image a shader writes: tracking GPU writes would make it safe for every game |
 | `stdalloc_cap 0x40000000` | [Ace Attorney Investigations Collection](../../dm/games/010005501E68C000/README.md), [AI: THE SOMNIUM FILES - nirvanA Initiative](../../dm/games/0100713016CCC000/README.md), [Blasphemous 2](../../dm/games/010040801A4C8000/README.md), [Boomerang Fu](../../dm/games/010081A00EE62000/README.md), [Brain Memory Training Academy](../../dm/games/0100F5D01DA3A000/README.md), [Castlevania: Belmont's Curse](../../dm/games/0100BA4026E94000/README.md), [Cozy Land](../../dm/games/0100777022394000/README.md), [Cult of the Lamb](../../dm/games/01002E7016C46000/README.md), [FINAL FANTASY VI](../../dm/games/0100AA001415E000/README.md), [Monster Train 2](../../dm/games/010051701FB46000/README.md), [Patrick's Parabox](../../dm/games/0100E44016C22000/README.md), [Subnautica](../../dm/games/0100429011144000/README.md), [Subnautica: Below Zero](../../dm/games/010014C011146000/README.md), [Super Mario RPG](../../dm/games/0100BC0018138000/README.md), [Super Monkey Ball Banana Rumble](../../dm/games/010031F019294000/README.md), [SUPER ROBOT WARS Y](../../dm/games/010063301BD50000/README.md), [TUNIC](../../dm/games/0100DA801624E000/README.md) | `game`, at goal | what the regions after it need, measured by the NSP script's region check, or 1 GB from its heap check; the host's cap is the default |
-| `present_interval display` | [Alien: Isolation](../../dm/games/010075D00E8BA000/README.md), [Assassin's Creed® Ⅲ Remastered](../../dm/games/01007F600B134000/README.md), [Atelier Ryza 3: Alchemist of the End & the Secret Key](../../dm/games/010095E018944000/README.md), [Borderlands: Game of the Year Edition](../../dm/games/010064800F66A000/README.md), [Diablo II: Resurrected](../../dm/games/0100726014352000/README.md), [Divinity: Original Sin 2 - Definitive Edition](../../dm/games/010027400CDC6000/README.md), [EA SPORTS FC 27](../../dm/games/0100C49025D3E000/README.md), [LEGO® Star Wars™: The Skywalker Saga](../../dm/games/010042D00D900000/README.md), [Luigi's Mansion 3](../../dm/games/0100DCA0064A6000/README.md), [Mario + Rabbids Kingdom Battle](../../dm/games/010067300059A000/README.md), [Mario + Rabbids® Sparks of Hope](../../dm/games/0100317013770000/README.md), [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md), [Monster Train 2](../../dm/games/010051701FB46000/README.md), [Need For Speed™ Hot Pursuit Remastered](../../dm/games/010029B0118E8000/README.md), [NieR:Automata The End of YoRHa Edition (010056B015FE8000)](../../dm/games/010056B015FE8000/README.md), [NieR:Automata The End of YoRHa Edition (0100B8E016F76000)](../../dm/games/0100B8E016F76000/README.md), [Pokémon Brilliant Diamond](../../dm/games/0100000011D90000/README.md), [Red Dead Redemption](../../dm/games/01007820196A6000/README.md), [South Park: The Fractured But Whole](../../dm/games/01008F2005154000/README.md), [stitch.](../../dm/games/010025801CEA8000/README.md), [The Witcher 3: Wild Hunt — Complete Edition](../../dm/games/0100A0800E9C4000/README.md) | `game`, at goal | right only for games whose logic does not count frames |
-| `fps_target 60` | [A Little to the Left](../../dm/games/0100354017668000/README.md), [Alien: Isolation](../../dm/games/010075D00E8BA000/README.md), [Apollo Justice: Ace Attorney Trilogy](../../dm/games/010020D01B890000/README.md), [Assassin's Creed® Ⅲ Remastered](../../dm/games/01007F600B134000/README.md), [ASTRAL CHAIN](../../dm/games/01007300020FA000/README.md), [Atelier Ryza 3: Alchemist of the End & the Secret Key](../../dm/games/010095E018944000/README.md), [Bloodstained: Ritual of the Night](../../dm/games/0100BF500207C000/README.md), [Borderlands: Game of the Year Edition](../../dm/games/010064800F66A000/README.md), [BRAVELY DEFAULT Ⅱ](../../dm/games/01006DC010326000/README.md), [CAPTAIN TSUBASA 2: WORLD FIGHTERS](../../dm/games/01009720213B0000/README.md), [Divinity: Original Sin 2 - Definitive Edition](../../dm/games/010027400CDC6000/README.md), [DRAGON BALL: Sparking! ZERO](../../dm/games/010035F022078000/README.md), [DRAGON QUEST I & II HD-2D Remake](../../dm/games/0100D7C01F254000/README.md), [DRAGON QUEST III HD-2D Remake](../../dm/games/01003E601E324000/README.md), [DRAGON QUEST VII Reimagined](../../dm/games/0100A9D01C446000/README.md), [DRAGON QUEST XI S: Echoes of an Elusive Age – Definitive Edition](../../dm/games/01006C300E9F0000/README.md), [EA SPORTS FC 27](../../dm/games/0100C49025D3E000/README.md), [FINAL FANTASY RESONANCE](../../dm/games/0100606026F12000/README.md), [FINAL FANTASY RESONANCE (Asian release)](../../dm/games/0100B8A026F14000/README.md), [Fire Emblem Engage](../../dm/games/0100A6301214E000/README.md), [Fire Emblem Fortune's Weave](../../dm/games/04007EF01F8AE000/README.md), [Hollow Knight](../../dm/games/0100633007D48000/README.md), [Hollow Knight: Silksong](../../dm/games/010013C00E930000/README.md), [Hyrule Warriors: Age of Calamity](../../dm/games/01002B00111A2000/README.md), [It Takes Two](../../dm/games/010092A0172E4000/README.md), [LEGO® Star Wars™: The Skywalker Saga](../../dm/games/010042D00D900000/README.md), [Luigi's Mansion 3](../../dm/games/0100DCA0064A6000/README.md), [Mario & Luigi: Brothership](../../dm/games/01006D0017F7A000/README.md), [Mario + Rabbids Kingdom Battle](../../dm/games/010067300059A000/README.md), [Mario + Rabbids® Sparks of Hope](../../dm/games/0100317013770000/README.md), [Mario Kart World](../../dm/games/0400C3F00006E000/README.md), [Minecraft Dungeons II](../../dm/games/0100A7C01B792000/README.md), [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md), [Need For Speed™ Hot Pursuit Remastered](../../dm/games/010029B0118E8000/README.md), [NieR:Automata The End of YoRHa Edition (010056B015FE8000)](../../dm/games/010056B015FE8000/README.md), [NieR:Automata The End of YoRHa Edition (0100B8E016F76000)](../../dm/games/0100B8E016F76000/README.md), [Oceanhorn 2: Knights of the Lost Realm](../../dm/games/01006CB010840000/README.md), [OCTOPATH TRAVELER](../../dm/games/010057D006492000/README.md), [OCTOPATH TRAVELER 0](../../dm/games/01005270232F2000/README.md), [OCTOPATH TRAVELER II](../../dm/games/0100A3501946E000/README.md), [Outer Wilds](../../dm/games/01003DC0144B6000/README.md), [Overcooked! All You Can Eat](../../dm/games/0100F28011892000/README.md), [Paper Mario: The Thousand-Year Door](../../dm/games/0100ECD018EBE000/README.md), [Persona 5 Tactica](../../dm/games/010087701B092000/README.md), [Pikmin 4](../../dm/games/0100B7C00933A000/README.md), [Pokémon Brilliant Diamond](../../dm/games/0100000011D90000/README.md), [Pokémon Shining Pearl](../../dm/games/010018E011D92000/README.md), [Princess Peach: Showtime!](../../dm/games/01007A3009184000/README.md), [Red Dead Redemption](../../dm/games/01007820196A6000/README.md), [SHIN MEGAMI TENSEI V: Vengeance](../../dm/games/010069C01AB82000/README.md), [South Park: The Fractured But Whole](../../dm/games/01008F2005154000/README.md), [stitch.](../../dm/games/010025801CEA8000/README.md), [The Legend of Zelda: Breath of the Wild](../../dm/games/01007EF00011E000/README.md), [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md), [The Legend of Zelda: Tears of the Kingdom](../../dm/games/0100F2C0115B6000/README.md), [The Rogue Prince of Persia](../../dm/games/01008D9022462000/README.md), [The Witcher 3: Wild Hunt — Complete Edition](../../dm/games/0100A0800E9C4000/README.md), [TRIANGLE STRATEGY](../../dm/games/0100CC80140F8000/README.md), [TUNIC](../../dm/games/0100DA801624E000/README.md), [Xenoblade Chronicles X: Definitive Edition](../../dm/games/0100453019AA8000/README.md) | `game`, at goal | a choice per game |
+| `present_interval display` | [Alien: Isolation](../../dm/games/010075D00E8BA000/README.md), [Assassin's Creed® Ⅲ Remastered](../../dm/games/01007F600B134000/README.md), [Atelier Ryza 3: Alchemist of the End & the Secret Key](../../dm/games/010095E018944000/README.md), [Borderlands: Game of the Year Edition](../../dm/games/010064800F66A000/README.md), [Diablo II: Resurrected](../../dm/games/0100726014352000/README.md), [Divinity: Original Sin 2 - Definitive Edition](../../dm/games/010027400CDC6000/README.md), [EA SPORTS FC 27](../../dm/games/0100C49025D3E000/README.md), [Graveyard Keeper 2](../../dm/games/0100005027A18000/README.md), [LEGO® Star Wars™: The Skywalker Saga](../../dm/games/010042D00D900000/README.md), [Luigi's Mansion 3](../../dm/games/0100DCA0064A6000/README.md), [Mario + Rabbids Kingdom Battle](../../dm/games/010067300059A000/README.md), [Mario + Rabbids® Sparks of Hope](../../dm/games/0100317013770000/README.md), [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md), [Monster Train 2](../../dm/games/010051701FB46000/README.md), [Need For Speed™ Hot Pursuit Remastered](../../dm/games/010029B0118E8000/README.md), [NieR:Automata The End of YoRHa Edition (010056B015FE8000)](../../dm/games/010056B015FE8000/README.md), [NieR:Automata The End of YoRHa Edition (0100B8E016F76000)](../../dm/games/0100B8E016F76000/README.md), [Pokémon Brilliant Diamond](../../dm/games/0100000011D90000/README.md), [Red Dead Redemption](../../dm/games/01007820196A6000/README.md), [South Park: The Fractured But Whole](../../dm/games/01008F2005154000/README.md), [stitch.](../../dm/games/010025801CEA8000/README.md), [The Witcher 3: Wild Hunt — Complete Edition](../../dm/games/0100A0800E9C4000/README.md) | `game`, at goal | right only for games whose logic does not count frames |
+| `fps_target 60` | [A Little to the Left](../../dm/games/0100354017668000/README.md), [Alien: Isolation](../../dm/games/010075D00E8BA000/README.md), [Apollo Justice: Ace Attorney Trilogy](../../dm/games/010020D01B890000/README.md), [Assassin's Creed® Ⅲ Remastered](../../dm/games/01007F600B134000/README.md), [ASTRAL CHAIN](../../dm/games/01007300020FA000/README.md), [Atelier Ryza 3: Alchemist of the End & the Secret Key](../../dm/games/010095E018944000/README.md), [Bloodstained: Ritual of the Night](../../dm/games/0100BF500207C000/README.md), [Borderlands: Game of the Year Edition](../../dm/games/010064800F66A000/README.md), [BRAVELY DEFAULT Ⅱ](../../dm/games/01006DC010326000/README.md), [CAPTAIN TSUBASA 2: WORLD FIGHTERS](../../dm/games/01009720213B0000/README.md), [Divinity: Original Sin 2 - Definitive Edition](../../dm/games/010027400CDC6000/README.md), [DRAGON BALL: Sparking! ZERO](../../dm/games/010035F022078000/README.md), [DRAGON QUEST I & II HD-2D Remake](../../dm/games/0100D7C01F254000/README.md), [DRAGON QUEST III HD-2D Remake](../../dm/games/01003E601E324000/README.md), [DRAGON QUEST VII Reimagined](../../dm/games/0100A9D01C446000/README.md), [DRAGON QUEST XI S: Echoes of an Elusive Age – Definitive Edition](../../dm/games/01006C300E9F0000/README.md), [EA SPORTS FC 27](../../dm/games/0100C49025D3E000/README.md), [FINAL FANTASY RESONANCE](../../dm/games/0100606026F12000/README.md), [FINAL FANTASY RESONANCE (Asian release)](../../dm/games/0100B8A026F14000/README.md), [Fire Emblem Engage](../../dm/games/0100A6301214E000/README.md), [Fire Emblem Fortune's Weave](../../dm/games/04007EF01F8AE000/README.md), [Graveyard Keeper 2](../../dm/games/0100005027A18000/README.md), [Hollow Knight](../../dm/games/0100633007D48000/README.md), [Hollow Knight: Silksong](../../dm/games/010013C00E930000/README.md), [Hyrule Warriors: Age of Calamity](../../dm/games/01002B00111A2000/README.md), [It Takes Two](../../dm/games/010092A0172E4000/README.md), [LEGO® Star Wars™: The Skywalker Saga](../../dm/games/010042D00D900000/README.md), [Luigi's Mansion 3](../../dm/games/0100DCA0064A6000/README.md), [Mario & Luigi: Brothership](../../dm/games/01006D0017F7A000/README.md), [Mario + Rabbids Kingdom Battle](../../dm/games/010067300059A000/README.md), [Mario + Rabbids® Sparks of Hope](../../dm/games/0100317013770000/README.md), [Mario Kart World](../../dm/games/0400C3F00006E000/README.md), [Minecraft Dungeons II](../../dm/games/0100A7C01B792000/README.md), [Monster Hunter Rise](../../dm/games/0100B04011742000/README.md), [Need For Speed™ Hot Pursuit Remastered](../../dm/games/010029B0118E8000/README.md), [NieR:Automata The End of YoRHa Edition (010056B015FE8000)](../../dm/games/010056B015FE8000/README.md), [NieR:Automata The End of YoRHa Edition (0100B8E016F76000)](../../dm/games/0100B8E016F76000/README.md), [Oceanhorn 2: Knights of the Lost Realm](../../dm/games/01006CB010840000/README.md), [OCTOPATH TRAVELER](../../dm/games/010057D006492000/README.md), [OCTOPATH TRAVELER 0](../../dm/games/01005270232F2000/README.md), [OCTOPATH TRAVELER II](../../dm/games/0100A3501946E000/README.md), [Outer Wilds](../../dm/games/01003DC0144B6000/README.md), [Overcooked! All You Can Eat](../../dm/games/0100F28011892000/README.md), [Paper Mario: The Thousand-Year Door](../../dm/games/0100ECD018EBE000/README.md), [Persona 5 Tactica](../../dm/games/010087701B092000/README.md), [Pikmin 4](../../dm/games/0100B7C00933A000/README.md), [Pokémon Brilliant Diamond](../../dm/games/0100000011D90000/README.md), [Pokémon Shining Pearl](../../dm/games/010018E011D92000/README.md), [Princess Peach: Showtime!](../../dm/games/01007A3009184000/README.md), [Red Dead Redemption](../../dm/games/01007820196A6000/README.md), [SHIN MEGAMI TENSEI V: Vengeance](../../dm/games/010069C01AB82000/README.md), [South Park: The Fractured But Whole](../../dm/games/01008F2005154000/README.md), [stitch.](../../dm/games/010025801CEA8000/README.md), [The Legend of Zelda: Breath of the Wild](../../dm/games/01007EF00011E000/README.md), [The Legend of Zelda: Ocarina of Time](../../dm/games/0400486024DEC000/README.md), [The Legend of Zelda: Tears of the Kingdom](../../dm/games/0100F2C0115B6000/README.md), [The Rogue Prince of Persia](../../dm/games/01008D9022462000/README.md), [The Witcher 3: Wild Hunt — Complete Edition](../../dm/games/0100A0800E9C4000/README.md), [TRIANGLE STRATEGY](../../dm/games/0100CC80140F8000/README.md), [TUNIC](../../dm/games/0100DA801624E000/README.md), [Xenoblade Chronicles X: Definitive Edition](../../dm/games/0100453019AA8000/README.md) | `game`, at goal | a choice per game |

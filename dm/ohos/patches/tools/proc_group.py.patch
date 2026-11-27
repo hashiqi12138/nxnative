@@ -53,31 +53,7 @@
  
      def _gone(self, secs):   # waits up to secs for the group to end (reaping the direct child on the way); → whether it did
          end = time.monotonic() + secs
-@@ -83,8 +98,22 @@
- 
-     def stop(self, sig=signal.SIGTERM):
-         """sig to the group (resumed first: a stopped process acts on no signal but SIGKILL), up to grace seconds, then SIGKILL; returns once the direct child is reaped and
--        no member is left, or REAP seconds after the SIGKILL (a member stuck in the kernel). Re-raises the last interrupt (or SIGTERM, exit) that came while it waited"""
-+        no member is left, or REAP seconds after the SIGKILL (a member stuck in the kernel). Re-raises the last interrupt (or SIGTERM, exit) that came while it waited
-+
-+        Windows: no group exists, so this stops and reaps the direct child and returns. The retry loop below would spin
-+        for ever there - members() answers [] on Windows, so _gone()'s "the group ended" test is never the reason to
-+        leave, and a child already reaped by finish() makes p.wait() return at once while the loop keeps repeating.
-+        Measured 2026-11-16: porter's every run() hung inside this loop, which is what held `porter inspect` and
-+        `porter port` for ten minutes with an empty log."""
-         late, self.done = None, True
-+        if self.win:   # DM_OHOS: no members() to wait for
-+            self._signal(sig)
-+            try: self.p.wait(timeout=self.grace)
-+            except subprocess.TimeoutExpired:
-+                self._signal(signal.SIGKILL)
-+                try: self.p.wait(timeout=REAP)
-+                except subprocess.TimeoutExpired: pass
-+            return
-         try:
-             self.resume(); self._signal(sig)
-             if self._gone(self.grace): self.p.wait(); return
-@@ -105,9 +134,22 @@
+@@ -96,9 +111,22 @@
      def lines(self):
          """The output of a group started with stdout=PIPE, a line at a time as text (universal newlines, undecodable bytes replaced: as text=True reads it). Ends at the end of
          the output, or drain seconds after the direct child's exit while a member still holds the pipe: those members are stopped then (stragglers) and the end follows.

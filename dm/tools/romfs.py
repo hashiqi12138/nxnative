@@ -253,20 +253,16 @@ def scandir(path):
 
 
 def walk(top, topdown=True, onerror=None, followlinks=False):
-    if not _resolve(top):
+    resolved_top = _resolve(top)
+    if not resolved_top:
         yield from _os.walk(top, topdown=topdown, onerror=onerror, followlinks=followlinks); return
+    image, relative = resolved_top
+    root = str(image.path) + ('/' + relative if relative else '')
     # A path inside an image is the image's own, and the image stores '/' whatever the host uses. Yielding the
     # platform path made shader_split.py name every source '/Content\Effects\Border.xnb', which the profile's
     # tables (split on a Mac) do not have, and moved 24 shaders from ps_content.bin to ps_other.bin - the same
     # content hashes under different names (measured 2026-11-16). Only the image's part is translated; a path
     # outside any image keeps its platform form.
-    def shown(path):
-        # DM_OHOS: an image's own path uses '/'
-        resolved = _resolve(path)
-        if not resolved: return str(path)
-        image, relative = resolved
-        if not relative: return str(path)
-        return str(image.path) + '/' + relative
     def visit(path):
         try:
             dirs, files = [], []
@@ -275,10 +271,10 @@ def walk(top, topdown=True, onerror=None, followlinks=False):
         except OSError as error:
             if onerror: onerror(error)
             return
-        if topdown: yield shown(path), dirs, files
-        for name in dirs: yield from visit(_os.path.join(path, name))
-        if not topdown: yield shown(path), dirs, files
-    yield from visit(top)
+        if topdown: yield path, dirs, files
+        for name in dirs: yield from visit(path + '/' + name)
+        if not topdown: yield path, dirs, files
+    yield from visit(root)
 
 
 class Path(type(_Path())):

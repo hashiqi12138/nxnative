@@ -74,6 +74,8 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | [Bayonetta 2](01007960049A0000/README.md) | `01007960049A0000` | 1.2 | 3.6.0 | PlatinumGames' engine (Wii U form) | NVN | — |
 | [Bayonetta 3](01004A4010FEA000/README.md) | `01004A4010FEA000` | 1.2.0 | 13.3.2 | PlatinumGames' engine | NVN | — |
 | [Bayonetta Origins: Cereza and the Lost Demon](0100CF5010FEC000/README.md) | `0100CF5010FEC000` | 1.0.0 (base) | 13.3.2 | PlatinumGames' engine | NVN | — |
+| [NEO: The World Ends with You](010043B013C5C000/README.md) | `010043B013C5C000` | 1.03 | 10.0.0 | provisional profile, not checked by hand | NVN | — |
+| [Tales of Eternia Remastered](010006E0230AC000/README.md) | `010006E0230AC000` | 2.0.0 | 21.4.4 | Unity 6000.0.66f2 IL2CPP, CRIWARE | NVN | — |
 | [The Binding of Isaac: Rebirth](01009BC00C38A000/README.md) | `01009BC00C38A000` | 1.0 (base) | 5.5.0 | its own engine | NVN | — |
 | [Big Brain Academy: Brain vs. Brain](0100620012D6E000/README.md) | `0100620012D6E000` | 1.2.0 | 11.4.3 | NintendoWare Bezel Engine 1.56 | NVN | — |
 | [BioShock Remastered](0100AD10102B2000/README.md) | `0100AD10102B2000` | 1.0.2 (provisional Mac profile) | 9.3.1 | Unreal Engine 3 (Blind Squirrel), Scaleform, Bink | NVN | — |
@@ -146,6 +148,7 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | [Ghost Trick: Phantom Detective](010029B018432000/README.md) | `010029B018432000` | 1.0.0 (base) | 13.3.0 | Capcom's RE Engine, Wwise | NVN | — |
 | [Guacamelee! 2](01007E100456C000/README.md) | `01007E100456C000` | 1.0.4 (provisional Mac profile) | 5.3.0 | DrinkBox Studios' engine, FMOD | NVN | — |
 | [Hades](0100535012974000/README.md) | `0100535012974000` | 1.0.38233 | 9.3.0 | Supergiant Games' engine (The Forge) | Vulkan | — |
+| [Graveyard Keeper 2](0100005027A18000/README.md) | `0100005027A18000` | 1.0.4 | 21.4.4 | Unity 6000.3.9f1 IL2CPP, FMOD | NVN | 60 fps target |
 | [Hades II](0100A00019DE0000/README.md) | `0100A00019DE0000` | 1.0.141667 (and base game) | 20.5.15 (base game: 19.3.9) | Supergiant Games' engine | NVN | — |
 | [Hollow Knight](0100633007D48000/README.md) | `0100633007D48000` | 1.5.12620 | 20.5.21 | Unity 6000.0.61f1 IL2CPP, FMOD | NVN | 60 fps target, [120 fps option](0100633007D48000/README.md#frame-rate) |
 | [Hollow Knight: Silksong](010013C00E930000/README.md) | `010013C00E930000` | 1.0.30000 | 20.5.8 | Unity 6000.0.50f1 IL2CPP | NVN | 60 fps target, [120 fps option](010013C00E930000/README.md#frame-rate) |
@@ -193,6 +196,10 @@ One row per profile; the notes are each profile's `README.md`. Entries marked pr
 | [OCTOPATH TRAVELER](010057D006492000/README.md) | `010057D006492000` | 1.0.5 | 3.5.1 | Unreal Engine 4.18 | NVN | 60 fps target |
 | [Octopath Traveler 0](01005270232F2000/README.md) | `01005270232F2000` | 1.0.5 | 19.3.13 | Unreal Engine 5 | NVN | 60 fps target |
 | [OCTOPATH TRAVELER II](0100A3501946E000/README.md) | `0100A3501946E000` | 1.1.1 | 12.3.2 | Unreal Engine 4.27 | NVN | 60 fps target |
+| [UNDER NIGHT IN-BIRTH Exe:Late cl-r](010038C00EC34000/README.md) | `010038C00EC34000` | 1.0.3 | 6.4.2 | French-Bread's own engine | NVN | — |
+| [UNDER NIGHT IN-BIRTH II Sys:Celes](0100BD401D18A000/README.md) | `0100BD401D18A000` | 1.42 | 15.3.2 | French-Bread's own engine | NVN | — |
+| [Unpacking](0100701015846000/README.md) | `0100701015846000` | 2.01 | 13.3.2 | Unity 2019.4.34f1 IL2CPP, Wwise | NVN | — |
+| [Viractal](0100FD501F95A000/README.md) | `0100FD501F95A000` | 1.4.5 | 21.4.4 | Unity IL2CPP | NVN | — |
 | [ŌKAMI HD](0100276009872000/README.md) | `0100276009872000` | 1.0.0 (base) | 4.5.0 | Clover Studio's PS2 engine, remastered; CRIWARE | NVN | — |
 | [Orbitals](040032B023CA4000/README.md) | `040032B023CA4000` | 1.1.2.0 (Switch 2) | 21.4.2 (Ounce) | Unreal Engine 5.6.1, Wwise, Bink 2 | NVN2 | — |
 | [Ori and the Blind Forest: Definitive Edition](010061D00DB74000/README.md) | `010061D00DB74000` | 1.0.2 | 8.2.0 | Unity 2018.4.1f1 IL2CPP, FMOD | NVN | — |

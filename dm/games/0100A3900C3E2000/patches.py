@@ -1,5 +1,9 @@
 # Paper Mario: The Origami King (0100A3900C3E2000): the rewriter's patches of this game's own builds. dm/tools/patch_nso.py loads every profile's patches.py and applies those of a module's NSO build ID;
 # CUTS, OBS and FRAME_STEP as described there ("Registered patches"). Patches of Nintendo SDK module builds are in dm/tools/sdk_patches.py
+BINDING = [
+    {'what': 'build-bound game patches', 'now': 'build', 'goal': 'unreviewed', 'purpose': 'runtime',
+     'why': 'introduced during game bring-up; the binding goals have not been reviewed'},
+]
 from nso_asm import ADRP, B
 CUTS = {
   # Paper Mario: The Origami King 1.0.1 (v65536) main: 60 fps (30 on the Switch). Each frame the renderer hands the window its present interval from the graphics object's field +0x71dc

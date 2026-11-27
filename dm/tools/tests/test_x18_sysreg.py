@@ -27,8 +27,8 @@ PATCH_BASE, KEY_PAGE, TSD, STACK = 0x10000, 0x20000, 0x30000, 0x40000
 KEY_INDEX = {k: i for i, k in enumerate(('K18', 'KTLS', 'KTLR', 'KGATE'))}
 SLOT = {'K18': 0x40, 'KTLS': 0x48, 'KTLR': 0x50, 'KGATE': 0x58}   # byte offsets from tpidrro_el0, as the key page holds them
 scope = dict(vars(nso_asm), re=re, struct=struct, combinations=combinations, md=md,
-             patch=bytearray(), PATCH_BASE=PATCH_BASE, KEY_PAGE_OFF=KEY_PAGE, KEY_INDEX=KEY_INDEX, fix=[])
-names = {'here', 'emit', 'emit_key_addr', 'emit_slot_addr', 'dis', 'regset', 'num', 'regs_in', 'pick',
+             patch=bytearray(), PATCH_BASE=PATCH_BASE, KEY_PAGE_OFF=KEY_PAGE, KEY_INDEX=KEY_INDEX, TARGET='apple', fix=[])
+names = {'here', 'emit', 'emit_tp', 'emit_key_addr', 'emit_slot_addr', 'dis', 'regset', 'num', 'regs_in', 'pick',
          'site_slot_copy', 'site_sysreg_read', 'site_tpidr_write', 'BX', 'reach_via'}   # BX and reach_via (with REACH, _holes and _hops): the site's branches, through a hop where a b does not reach
 tree = ast.parse((TOOLS / 'patch_nso.py').read_text())
 exec(compile(ast.Module(body=[n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names or isinstance(n, ast.Assign) and {getattr(t, 'id', None) for t in ast.walk(n.targets[0])} & {'REACH', '_holes'}],

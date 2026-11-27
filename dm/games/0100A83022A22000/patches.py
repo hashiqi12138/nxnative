@@ -1,5 +1,9 @@
 # Absolum (0100A83022A22000): the rewriter's patches of this game's own builds. dm/tools/patch_nso.py loads every profile's patches.py and applies those of a module's NSO build ID;
 # CUTS, OBS and FRAME_STEP as described there ("Registered patches"). Patches of Nintendo SDK module builds are in dm/tools/sdk_patches.py
+BINDING = [
+    {'what': 'malloc virtual address region reduced to 2.5 GB', 'now': 'build', 'goal': 'unreviewed', 'purpose': 'address space',
+     'why': 'the game initializes a 40 GB StandardAllocator region and its largest allocation is the 1.75 GB FNA3D heap'},
+]
 CUTS = {
   # Absolum 1.1.1 (v393216) main: nninitStartup (main+0x1b54d0) initializes malloc's StandardAllocator with virtual address memory over 40 GB of address space (main+0x28bff4, then
   # main+0x7562d0). Its largest block is FNA3D's GPU heap, 1.75 GB allocated at FNA3D_CreateDevice (main+0xc03660 → main+0x563370); measured into the first level, the allocator's blocks reach

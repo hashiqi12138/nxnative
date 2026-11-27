@@ -1,6 +1,6 @@
 --- a/host/hle_oe.c
 +++ b/host/hle_oe.c
-@@ -276,7 +276,8 @@
+@@ -282,7 +282,8 @@
  #endif
  static const char *prog_name(int index) {   // the profile's name of a program of this app (game.py header_multi), NULL when it has no such program
  #ifdef DM_GAME_MULTI

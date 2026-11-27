@@ -1,5 +1,9 @@
 # FINAL FANTASY RESONANCE (0100606026F12000): the rewriter's patches of this game's own builds. dm/tools/patch_nso.py loads every profile's patches.py and applies those of a module's NSO build ID;
 # CUTS, OBS and FRAME_STEP as described there ("Registered patches"). Patches of Nintendo SDK module builds are in dm/tools/sdk_patches.py
+BINDING = [
+    {'what': 'build-bound game patches', 'now': 'build', 'goal': 'unreviewed', 'purpose': 'runtime',
+     'why': 'introduced during game bring-up; the binding goals have not been reviewed'},
+]
 CUTS = {
   # FINAL FANTASY RESONANCE 1.0.1 (v65536) main: Unreal Engine 5.6.1 constructs its FMallocBinned3 in place, as Octopath Traveler 0's: nninitStartup (main+0x13370) reserves the engine region
   # (62 GB unless -SwitchVirtualAddressSpaceSize= caps it, main+0x137d0), then calls the constructor on main+0x77c6210 (bss; main+0x137f0 → main+0xae770), which reserves 38 GB of address space

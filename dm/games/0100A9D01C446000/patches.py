@@ -1,5 +1,9 @@
 # DRAGON QUEST VII Reimagined (0100A9D01C446000): the rewriter's patches of this game's own builds. dm/tools/patch_nso.py loads every profile's patches.py and applies those of a module's NSO build ID;
 # CUTS, OBS and FRAME_STEP as described there ("Registered patches"). Patches of Nintendo SDK module builds are in dm/tools/sdk_patches.py
+BINDING = [
+    {'what': 'build-bound game patches', 'now': 'build', 'goal': 'unreviewed', 'purpose': 'runtime',
+     'why': 'introduced during game bring-up; the binding goals have not been reviewed'},
+]
 CUTS = {
   # DRAGON QUEST VII Reimagined 1.2.0 (v131072) main: Unreal Engine 4.27's FMallocBinned3 likewise takes 37 GB of the engine's address region (nninitStartup reserves 62 GB at main+0xe8a2c0
   # unless -SwitchVirtualAddressSpaceSize= caps it; the allocator's pools are cut out of that region, so a capped region would starve them). Here the allocator is made on the first allocation,

@@ -1,6 +1,6 @@
 --- a/host/hle_sdk16.c
 +++ b/host/hle_sdk16.c
-@@ -146,12 +146,14 @@
+@@ -143,12 +143,14 @@
  static size_t font_skip(void) {
      static int skip = -1;
      if (skip < 0) {

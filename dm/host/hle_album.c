@@ -141,6 +141,7 @@ static int album_write_png(const char *path, const uint8_t *rgba, size_t w, size
         uint8_t *row = raw + y * (stride + 1);
         row[0] = 0;
         memcpy(row + 1, rgba + y * stride, stride);
+        for (size_t x = 0; x < w; x++) row[1 + x * 4 + 3] = 255;
     }
     uLongf zlen = compressBound((uLong)raw_len);
     uint8_t *z = malloc(zlen ? zlen : 1);

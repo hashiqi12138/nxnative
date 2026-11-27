@@ -1,5 +1,7 @@
 name	class	meaning
 DM_AB	diagnostic	`=<frames>` splits the run into phases of that many frames and alternates every switch set to `ab` (on in the odd phases); logs an `[ab]` line per phase with GPU and frame time and attachment traffic
+DM_ADAPTIVE_FPS	diagnostic	Enables the adaptive frame-rate policy.
+DM_ADAPT_UP_PCT	diagnostic	Percentage increase used by the adaptive resolution or frame-rate policy.
 DM_ALBUM_DIR	path	Folder where `nn::album::SaveScreenshot` writes local album PNG screenshots (`hle_album.c`; Mac apps default to `~/Pictures/nxnative/<title ID>`, iOS apps to `Documents/album`, host fallback `<DM_ROOT>/album` or `<dirname(DM_SAVE)>/album`; created lazily on first save)
 DM_ALIAS_SIZE	diagnostic	`=<bytes>` gives the guest an alias region of that size instead of the platform's, which is at least the Switch's 64 GB on the Mac and the profile's `mem_alias` on an iPhone (at least 256 MB, whole host pages; the heap and stacks stay as they are): the profile's value reproduces an iPhone's address space on the Mac, as the NSP script's heap check does; its address region check sets 64 GB (Mac only: an iPhone has no room)
 DM_ALIAS_WINDOWS	diagnostic	`=<MB>` logs every 30 s how much of each window of that size in the alias region is mapped (windows aligned to their size in absolute addresses)
@@ -16,10 +18,12 @@ DM_AUDIO_DEVICE	diagnostic	`=<part of a device name>` (Mac) plays the audio on t
 DM_AUDIO_DUMP	diagnostic	`=<file>` writes every PCM block an output accepts (16-bit, 48 kHz, the channel count logged by `DM_AUDIO_DUMP`: the output's own count, or for an `AudioRenderer` DeviceSink its 2-channel stereo fold on silent/stereo routes and 6-channel surround on a 5.1 route), each output to its own file: `<file>` for `audio #0`, `<file>.<N>` for `audio #N`; to judge whether a sound played
 DM_AUDIO_LIVE_PCM	test	`=<file>`: `tests/t_audio_live.c` plays that file (16-bit, 48 kHz, six channels interleaved in the guest's order) instead of its test tones
 DM_AUDIO_MUTE	switch	`=1` runs the real Core Audio output path (callback pacing, background take-over) with the output silenced, for lifecycle tests on the Mac without noise
+DM_AUDIO_PROBE	diagnostic	Enables audio-path probing and diagnostic output.
 DM_AUDREN_RT	diagnostic	`0` keeps ordinary scheduling for the in-process audio renderer so its default real-time policy can be compared against it
 DM_AUDREN_TRACE	diagnostic	When set, the CPU audio renderer logs every update with the number of frames rendered since the previous one
 DM_AV1_DAV1D	switch	`=1` decodes AV1 movies with dav1d even where VideoToolbox decodes AV1 (Apple M3 and A17 Pro on), to compare the two or to check the path older chips take (`hle_movie_av1.c`)
 DM_BOOTPROF	diagnostic	When set, logs boot timing: the loader's breakdown (mapping, relocation, probes), Metal library loading, pipeline creation, texture uploads and the first present
+DM_BUILD_ROOT	path	Root directory for build outputs.
 DM_BUNDLE_ID	switch	Overrides the iOS app's bundle ID in `build_ipa.sh` (default `org.nxnative.<title ID in lowercase>`)
 DM_CHEATS	path	Folder of Atmosphère cheat files: `<folder>/<build ID>.txt` or an SD-card layout (`atmosphere/contents/<title ID>/cheats/`) under it (default `<DM_ROOT>/cheats`); the Mac menu lists and toggles them
 DM_CHEATS_ANY_BUILD	switch	`1` loads a cheat file written for another build of the game when it is the only one (its addresses may not fit: for `cheat_anchor.py` checks)
@@ -53,6 +57,8 @@ DM_FONT_DIR	path	Folder of the shared-font stand-ins (`standard.ttf`, `nintendo_
 DM_FORCE_STRICT	diagnostic	`=1` makes the loader fail on forced-hook entries no module references, instead of only noting them (for checking a mistyped list)
 DM_FPS	switch	`30` or `60` pins the frame rate the display link and frame pacing aim for; otherwise it follows the game's present interval (60, or 30 when the game asks for 30)
 DM_FPS_HOLD	player	`on` / `off` overrides the profile's `fps_hold`: whether late frames may raise the hold above the frame cap's vsyncs (on by default)
+DM_FPS_LOCKS	diagnostic	Logs frame-rate lock writes and their target addresses.
+DM_FPS_PIN	diagnostic	Pins the host frame-rate policy for comparison runs.
 DM_FPS_TARGET	player	Frame-rate cap: `30` or `60`, `40` for a build whose frame step takes ticks of 1/120 s (`FRAME_STEP_120`: Ocarina of Time; 30 elsewhere, on a screen not at a multiple of 120 Hz, in Low Power Mode, or with `DM_PRESENT_LINK=1`) ([40 fps in ticks of 1/120 s](reference/frame-rate.md#40-fps-in-ticks-of-1120-s)), `120` for a game whose profile has `fps_max 120` (60 otherwise), or `0` for the game's own limit; overrides the profile's `fps_target`
 DM_FS	diagnostic	When set, logs file opens, paths not found or not mounted, and a read summary every 64 MiB or 1000 reads
 DM_FSLOG	diagnostic	`=<file>` writes one TSV line per ReadFile: seconds since boot, guest path, offset, length and guest buffer address
@@ -62,6 +68,7 @@ DM_FULLSCREEN	player	`1` (any value but `0`) starts the Mac window in fullscreen
 DM_FX_DIRECT	switch	With `DM_PRESENT_UPSCALE=metalfx`, `0` keeps the present pass after MetalFX's spatial scaler; by default the scaler writes the drawable itself when the picture fills it unflipped and the drawable takes the scaler's output (iOS)
 DM_FX_INPLACE	switch	With `DM_PRESENT_UPSCALE=metalfx`, `0` keeps the copy into MetalFX's input; by default the scaler reads the presented texture itself when the picture is all of it
 DM_GAME	switch	Selects the game profile (a title ID under `dm/games` or `DM_GAMES_DIR`) for the Python tools and the rewriter; there is no default
+DM_GAMEPERF	diagnostic	Enables per-game performance diagnostics.
 DM_GAMES_DIR	path	Profile folders outside the repository, separated by `:`, searched after `dm/games`; the NSP script points it at a provisional or derived profile
 DM_GAMES_FIRST	switch	`=1` searches `DM_GAMES_DIR` before `dm/games`, so a provisional or derived profile wins over the game's own (the NSP script's `--provisional`)
 DM_GAME_ENV	switch	`KEY=VALUE` pairs, separated by spaces, that the game's own `getenv` returns, in place of the profile's `game_env` (`hle_os.c`); any other name goes to the SDK's empty environment
@@ -91,6 +98,7 @@ DM_GUEST_FILE_MIN_FREE	switch	`=<size>` (whole MB, K / M / G; default 2G, `0` ne
 DM_GUEST_FILE_PUNCH	switch	`0` keeps the disk blocks of guest memory the game gives back (with `DM_GUEST_FILE=1`); by default they are punched out (`F_PUNCHHOLE`, which also drops the pages): the heap's at once, the alias region's by a sweep every 10 s once they have stayed given back over a whole interval
 DM_GUEST_FILE_SCAN	diagnostic	`=1` (with `DM_GUEST_FILE=1`): every 30 s a `[mem] guest file scan` line, the dirty guest pages by region (heap, alias, stack, other) and how many of them read all 0
 DM_GUEST_SPAWN_TEST	diagnostic	`=1` runs a self-test before `nnMain`: a host-started guest thread does SDK malloc / free and locks an `nn::os` mutex, and the result is logged; `=2` also keeps a resident thread
+DM_HAP_BUILD_DIR	path	Directory where the OHOS HAP build is staged.
 DM_HID_LOG	diagnostic	`1` logs the HID button usage number of each button pressed on a raw HID gamepad (`pad_hid_mac.h`), to write a `DM_HID_MAP`
 DM_HID_MAP	switch	`=<map>` such as `A=1,B=2,X=4,Y=5`: which HID button usage presses each Switch button on a raw HID gamepad (names A B X Y LS RS L R ZL ZR PLUS MINUS LEFT UP RIGHT DOWN; default 8BitDo's D-input numbering by position, the Switch wired HID layout on USB `0f0d:00f0` (HORI Taiko Drum) and `0e6f:0185` (PDP Wired Fight Pad Pro), `pad_hid.h`); Mac only
 DM_HID_PADS	switch	`0` stops reading raw HID gamepads that GameController does not list, such as an 8BitDo in its own mode (`pad_hid_mac.h`); Mac only
@@ -250,6 +258,7 @@ DM_NVN_RT_SUBSET	switch	`0` begins a pass of its own for targets that are the fi
 DM_NVN_RUNTIME_COMPILER	path	Mac development runs: `dmsh_live.py` from the same checkout as the host. Compiles missing NVN1 vertex and pixel stages with the packer's toolchain and caches them under `DM_TEMP/nvn-shaders`.
 DM_NVN_RUNTIME_PYTHON	path	Mac development runs: the Python executable that runs `DM_NVN_RUNTIME_COMPILER`.
 DM_NVN_RUNTIME_SOURCE	switch	`1` makes the shader compiler emit Metal source for the host to compile with the Metal API. The Mac app launcher sets this when the compiler is bundled.
+DM_NVN_SAMP_SNAP	diagnostic	Enables sampler-state snapshot diagnostics in the NVN layer.
 DM_NVN_SHDUMP	diagnostic	`=<dir>` saves programs missing from the shader map as `<key>.ctl` (control section) and `<key>.code`, to find the files that hold them
 DM_NVN_SHMAP	path	The shader map (`shader_map.tsv`); `c1_full.tsv` and `pso_manifest.tsv` are taken from the same folder. Default: the game profile's folder on the Mac; the iOS app sets it
 DM_NVN_SHOT	diagnostic	`=<frame>[,<frame>…]:<path>` saves the swapchain texture as an image at those frames (`%d` in the path = frame number); a window the game crops is saved as presented (the crop drawn at the texture's own size)
@@ -320,6 +329,7 @@ DM_OODLE_HOST	path	The Mac host binary that `shader_split.py` runs in its Oodle 
 DM_OODLE_JOB	path	`=<job file>`: the host runs the game's own Oodle decoder on every record of the job file right before `nnMain`, writes `<job file>.out` and exits (Unreal shader archives)
 DM_OODLE_MODULES	path	The rewritten modules the Mac host's Oodle tool mode loads when `shader_split.py` decodes Trinity packs; set by the NSP script
 DM_OODLE_SERVE	switch	`=1`: the host answers decode requests on stdin / stdout with the game's own Oodle (or LZ5) decoder from the guest main thread before the SDK starts, until stdin ends
+DM_OPENGTX	diagnostic	Enables the OpenGTX performance hint; `0` disables it.
 DM_OPEN_USERS	switch	Hexadecimal bitmask of open local users emitted by `oe::ExecuteProgram` from `account::PushOpenUsers` for the next program; `account::PopOpenUsers` consumes it once and opens fresh sessions; relaunch, unpushed hops and missing-program fallback drop it
 DM_OPMODE	player	The operation mode the game sees: `0` handheld, `1` console (default: the profile's `op_mode`, console unless set); read once at startup
 DM_PAD_IDENTICAL	switch	`0` stops reading identical pads here when GameController lists fewer of their model than IOKit has, such as two Pro Controllers over USB (each a player of its own: a Pro Controller from its report 0x30, another model from its HID elements; `pad_hid_mac.h`, `pad_pro.h`); `DM_HID_PADS=0` stops it too; Mac only
@@ -328,6 +338,7 @@ DM_PAD_PRESS_TO_JOIN	player	`1`: a controller is no player until one of its butt
 DM_PATCH_FRONT	switch	`=<bytes>`: the size of the patch area right before the module base for a long text (`BIG_TEXT`); set only by the rewriter's own rerun with the size it needs
 DM_PHONE_MOTION	switch	On iOS, whether the phone's own device motion drives player 1's six-axis sensor: `auto` (default) while no controller supplies fresh motion, `1` phone only, `0` never; each source keeps its own orientation
 DM_PICTURE_FIT	player	`fill` scales the 16:9 picture until it covers the screen (iPhone/iPad landscape) or Mac window and crops the edges (portrait, tabletop split and TV stay fitted on iOS); `fit` or unset, the largest 16:9 rectangle with black bars. Launcher and iOS in-game menu setting
+DM_PIN_REPLAY	diagnostic	Pins replay work to a stable execution configuration for profiling.
 DM_PREEMPT	switch	`0` / `1` overrides the profile's `core_preempt`: also check already-runnable higher-priority peers on the caller's core after every thread SVC
 DM_PRELOAD	diagnostic	Set: on the Mac, runs the host's early background loading (`dm_host_preload_start`) as the iOS app does, to exercise that path
 DM_PRESENT_DEPTH	switch	`=<n>` (default 1): without the display link (`DM_PRESENT_LINK=0`), the acquire waits until at most n presents queued are not yet on screen or dropped, as the drawables' presented handlers report, so a frame cap the game holds no longer piles frames up in the present queue and the layer's drawables (not with present snapshots); `0` is the Switch's double buffering, which a Mac holds only below the screen's rate (about 40 fps at most at a 60 fps cap). Each 300 shown frames the log gives the time from the game's enqueue to the screen (`present: game enqueue to screen`) and these waits
@@ -450,6 +461,7 @@ DM_SW2_MOTION_SIDE	switch	`=L` takes a Joy-Con 2 pair's motion from the left Joy
 DM_SW2_VERBOSE	diagnostic	`=1` logs the first report of each second of every Switch 2 controller: buttons, sticks, raw sensors, battery, and the bytes the parser does not read (0x18..0x2F and past 0x3C, in hex: whether a report carries the sensor's own timestamp or more than one sample is not known)
 DM_SYMCHECK	diagnostic	`=1` checks every hashed module symbol lookup against a linear search and logs a red line for each mismatch
 DM_SYSTEM_DIR	path	The player's own console files, for every game: `sysdata/<16 hex digits>/` a system data archive's RomFS files, `save/8000000000000030/MiiDatabase.dat` the Mii database (docs/reference/services.md, A console's own Mii database and system data), and the host writes `host/MiiDatabase.dat`, the Miis `AppendMii` made; the Mac launcher sets `~/Library/Application Support/nxnative/system`, the iOS app `Documents/system`; default `$DM_ROOT/run/platform/system`
+DM_TARGET	diagnostic	Selects the target platform or architecture for the build tool.
 DM_TBUF_ALIGN	diagnostic	`=<bytes>` uses that value as the linear-texture alignment when it is larger than the device's `minimumLinearTextureAlignmentForPixelFormat`, for buffer textures and for linear textures on a pool's buffer: a Mac can then reproduce a phone's larger alignment (a 64-byte one fails the buffers and linear textures a device with 64 bytes cannot view), to check `tbuf_as_2d`'s aligned-row copy and the upload of unaligned linear textures (`linear_fit`)
 DM_TEAM_ID	switch	Apple team ID for the per-game Xcode project, used when `--team-id` / `TEAM_ID` is not given; `build_ipa.sh` uses the placeholder `0000000000` (unsigned) when unset
 DM_TEMP	path	Temporary storage folder (default `$DM_ROOT/run/platform/temp`); stand-in system data goes in `<DM_TEMP>_sysdata`; the Mac launcher, the iOS app and the NSP script set it
@@ -484,8 +496,112 @@ DM_UDC_SELFTEST	diagnostic	`=1` runs a start-up check of DontCare load and store
 DM_UE_SHADERS	path	Folder of the Unreal shader code archives decoded by `uepak.py`, for `shader_split.py` (default `ue_shaders` beside the RomFS); needed when the RomFS has Unreal paks
 DM_UE_TEXTURE_POOL	switch	Megabytes Unreal's texture streaming pool (`r.Streaming.PoolSize`) is raised to, overriding the profile's `ue_texture_pool`; `0` keeps the game's own pool. On iOS only this switch turns it on (`Documents/env.txt`)
 DM_UPSCALER	player	`metalfx` draws the game's own upscaler shaders (NDSR networks found by the shader map) with MetalFX's spatial scaler; `game` (the default) runs them; `ab` with `DM_AB=<frames>` draws it with MetalFX in every second phase (a measurement in one run)
+DM_VERSION_CODE	diagnostic	Overrides the generated HAP versionCode.
+DM_VK_ASYNC_PIPE	diagnostic	Enables the asynchronous Vulkan pipeline path.
 DM_VK_CAPTURE	path	`=<dir>` (Mac) writes every SPIR-V module the game creates to `<dir>/<key>.spv`; the NSP script's Vulkan shader capture stage sets it
+DM_VK_CB_DRAWS	diagnostic	Records command-buffer draw diagnostics.
+DM_VK_CRUMBS	diagnostic	Enables Vulkan command breadcrumbs for diagnosing submission failures.
+DM_VK_D32_R32_COPY	diagnostic	Selects the D32/R32 copy compatibility path.
+DM_VK_DBG_DRAW	diagnostic	Enables Vulkan debug draw instrumentation.
+DM_VK_DUMPBC	diagnostic	Dumps BC-compressed texture data for inspection.
+DM_VK_DYN_UBO	diagnostic	Enables dynamic uniform-buffer handling.
+DM_VK_FDZ	diagnostic	Forces depth to the far-plane value for diagnostics.
+DM_VK_FIXED_FMT	diagnostic	Forces a fixed Vulkan format for comparison.
+DM_VK_FLIPY	diagnostic	Flips Vulkan output vertically.
+DM_VK_FS_OUT_MASK	diagnostic	Overrides the fragment-shader output mask.
+DM_VK_LEGACY_SWIZZLE	diagnostic	Uses the legacy component swizzle path.
+DM_VK_LIN_BACK	diagnostic	Enables the linear backend buffer path.
 DM_VK_LOG	diagnostic	`=1` logs Vulkan object creation in the Vulkan-on-Metal layer
+DM_VK_LOGVIEW	diagnostic	Enables Vulkan log viewing.
+DM_VK_LOG_CLEAR	diagnostic	Clears Vulkan logs at startup.
+DM_VK_LOG_FS	diagnostic	Includes filesystem operations in Vulkan logs.
+DM_VK_LOG_TID	diagnostic	Includes thread IDs in Vulkan logs.
+DM_VK_LOG_UPLOADS	diagnostic	Logs Vulkan resource uploads.
+DM_VK_LRZ_TOUCH	diagnostic	Controls depth-range touching in the Vulkan backend.
+DM_VK_MEMO_PROF	diagnostic	Reports descriptor memo counters every 300 submissions.
+DM_VK_NOCULL	diagnostic	Disables Vulkan culling.
+DM_VK_NOPCACHE	diagnostic	Disables the Vulkan pipeline cache.
+DM_VK_NOPREWARM	diagnostic	Disables Vulkan pipeline prewarming.
+DM_VK_NO_ZEROCOPY	diagnostic	Disables zero-copy Vulkan resource uploads.
+DM_VK_PASSDUMP	diagnostic	Enables render-pass dumping.
+DM_VK_PASSDUMP_DEPTH	diagnostic	Includes depth data in render-pass dumps.
+DM_VK_PASSDUMP_FMT	diagnostic	Overrides the render-pass dump format.
+DM_VK_PASSDUMP_FRAMES	diagnostic	Selects frames included in render-pass dumps.
+DM_VK_PASSDUMP_PASS	diagnostic	Selects the render pass to dump.
+DM_VK_PASSDUMP_SIZE	diagnostic	Overrides the render-pass dump size.
+DM_VK_PASSDUMP_SKIP	diagnostic	Skips selected passes while dumping.
+DM_VK_PASSDUMP_TARGET	diagnostic	Selects the render target to dump.
+DM_VK_PASS_SPLIT	diagnostic	Splits Vulkan render passes for diagnostics.
+DM_VK_PASS_SPLIT_DEPTH	diagnostic	Includes depth passes when splitting render passes.
+DM_VK_PASS_TIMES	diagnostic	Logs Vulkan render-pass timings.
+DM_VK_POLLWAIT	diagnostic	Selects polling for Vulkan fence waits.
+DM_VK_PRESENT_TID	diagnostic	Pins presentation work to the specified thread.
+DM_VK_PROF	diagnostic	Enables Vulkan CPU and GPU profiling.
+DM_VK_PROF_MS	diagnostic	Sets the Vulkan profiling sample interval in milliseconds.
+DM_VK_PROF_OUT	diagnostic	Appends raw profiling samples to the named file.
+DM_VK_PROF_SLOW	diagnostic	Reports Vulkan operations slower than the selected threshold.
+DM_VK_PROF_TID	diagnostic	Samples the specified thread for Vulkan profiling.
+DM_VK_RD_TOUCH	diagnostic	Controls read-touch tracking for Vulkan resources.
+DM_VK_RP	diagnostic	Enables Vulkan render-pass diagnostics.
+DM_VK_RT_ALIAS	diagnostic	Enables render-target aliasing experiments.
+DM_VK_RT_ALIAS_FMT	diagnostic	Overrides the aliased render-target format.
+DM_VK_RT_DUP	diagnostic	Duplicates render targets for diagnostics.
+DM_VK_RT_MAXCOL	diagnostic	Limits the number of Vulkan render-target color attachments.
+DM_VK_SAMP_LOG	diagnostic	Logs Vulkan sampler operations.
+DM_VK_SCRATCH_MB	diagnostic	Sets Vulkan scratch memory size in MiB.
+DM_VK_SETSPLIT	diagnostic	Splits descriptor-set updates for diagnostics.
+DM_VK_SHADERS	diagnostic	Enables Vulkan shader diagnostics.
+DM_VK_SHOT	diagnostic	Captures the selected Vulkan frame.
+DM_VK_SHOTS	diagnostic	Captures a sequence of Vulkan frames.
+DM_VK_SHOT_EVERY	diagnostic	Captures every selected Vulkan frame interval.
+DM_VK_SKIP_OPS	diagnostic	Skips selected Vulkan operations for A/B diagnosis.
+DM_VK_SPV_ALT	diagnostic	Uses alternate SPIR-V for comparison.
+DM_VK_SPV_DIR	path	Directory used for SPIR-V inputs or dumps.
+DM_VK_SPV_DUMP	diagnostic	Dumps generated SPIR-V modules.
+DM_VK_SPV_KEY	diagnostic	Selects a SPIR-V module by key.
+DM_VK_SPV_SEED	diagnostic	Sets the SPIR-V selection seed.
+DM_VK_SUBMIT_SPLIT	diagnostic	Splits Vulkan submissions for diagnosis.
+DM_VK_SYNC_PRESENT	diagnostic	Synchronizes Vulkan presentation with completion.
+DM_VK_TEST_CLEAR	diagnostic	Uses a test clear value or clear path.
+DM_VK_TEXDUMP	diagnostic	Dumps Vulkan textures.
+DM_VK_TEXDUMP_FMT	diagnostic	Overrides the texture dump format.
+DM_VK_TEXDUMP_LAYERS	diagnostic	Selects texture layers to dump.
+DM_VK_TEXDUMP_LEVEL	diagnostic	Selects texture mip levels to dump.
+DM_VK_TEXDUMP_SIZE	diagnostic	Overrides the texture dump dimensions.
+DM_VK_TRACE_FRAME	diagnostic	Selects a Vulkan frame to trace.
+DM_VK_TRACE_PASS	diagnostic	Selects a Vulkan render pass to trace.
+DM_VK_TRACE_SIZE	diagnostic	Limits the Vulkan trace size.
+DM_VK_UBO_LOG	diagnostic	Logs Vulkan uniform-buffer updates.
+DM_VK_UBWC	diagnostic	Enables the UBWC-compatible resource path.
+DM_VK_VALIDATE	diagnostic	Enables Vulkan validation diagnostics.
+DM_VK_VBOUND	diagnostic	Checks or overrides Vulkan vertex-buffer bounds.
+DM_VK_WATCH	diagnostic	Watches selected Vulkan objects or operations.
+DM_VK_XEG_SHARP	diagnostic	Enables the XEG sharpening path.
+DM_VK_XEG_UPSCALE	diagnostic	Enables XEG upscaling.
+DM_VK_XFB	diagnostic	Enables transform feedback in the Vulkan backend.
+DM_VK_X_BATCHW	diagnostic	Sets the Vulkan batch weight.
+DM_VK_X_BC_CPU	diagnostic	Decodes BC textures on the CPU, as on a device without BC support.
+DM_VK_X_COLOR	diagnostic	Overrides the Vulkan color-output path.
+DM_VK_X_CUTANY	diagnostic	Allows a cut at any matching Vulkan operation.
+DM_VK_X_DEPTH	diagnostic	Overrides the Vulkan depth path.
+DM_VK_X_DEPTHFUNC	diagnostic	Overrides the Vulkan depth function.
+DM_VK_X_FENCES	diagnostic	Enables Vulkan device fences for synchronization experiments.
+DM_VK_X_LANDCUT	diagnostic	Enables the landmark cut heuristic.
+DM_VK_X_NOBAR	diagnostic	Disables Vulkan barriers.
+DM_VK_X_NOBC	diagnostic	Disables the command-buffer cache so every draw is recorded.
+DM_VK_X_NOCD	diagnostic	Disables the selected Vulkan conditional path.
+DM_VK_X_NOCLIPMAP	diagnostic	Disables clipmap handling.
+DM_VK_X_NODRVC	diagnostic	Disables driver command coordination.
+DM_VK_X_NOGS	diagnostic	Disables geometry-shader handling.
+DM_VK_X_NOKEEP	diagnostic	Disables resource keep-alive behavior.
+DM_VK_X_NOPRERESET	diagnostic	Disables pre-reset handling.
+DM_VK_X_NOSETC	diagnostic	Disables the selected set-coordination path.
+DM_VK_X_NOSETMEMO	diagnostic	Disables the per-stage descriptor memo for A/B testing.
+DM_VK_X_NOSHC	diagnostic	Disables the selected shader-coordination path.
+DM_VK_X_RDKEEP	diagnostic	Keeps render-target resources for diagnosis.
+DM_VK_X_SETVERIFY	diagnostic	Checks one descriptor memo hit in 64 against a full collection.
+DM_VK_X_SKIPVS	diagnostic	Skips vertex-shader processing for diagnosis.
+DM_VK_ZEROCOPY_MAX_MB	diagnostic	Maximum zero-copy Vulkan upload size in MiB.
 DM_VSYNC_HZ	switch	`=<Hz>`: rate at which a host thread fires the vi vsync event when the display link does not drive it (default 60)
 DM_WAKE_UNLOCKED	switch	`0` signals a woken guest thread while the waker still holds the thread lock, as before; by default the signal comes after the lock is let go, so the woken thread does not sleep again on it ([Wakes signalled after the scheduler lock is let go](reference/threads.md#wakes-signalled-after-the-scheduler-lock-is-let-go))
 DM_WATCH	diagnostic	`=<s>` dumps all threads after that many seconds (SIGALRM) and turns on the stall watchdog; off unless set

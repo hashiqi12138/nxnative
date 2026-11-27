@@ -34,12 +34,13 @@ void guest_thread_init(void) {
 }
 // The thread's kernel ID at TLR[0x110], the one svcGetThreadId answers (hle_thread.c's thr_t id, never 0: 0 is the owner word of an unlocked mutex). Without it every
 // unlocked SDK 22 mutex reads as the caller's and the first heap lock aborts (docs/reference/threads.md)
-void guest_thread_set_id(uint64_t id) { *(uint32_t *)((uint8_t *)dm_tsd_get(g_keytlr) + 0x110) = (uint32_t)id; }
+void guest_thread_set_id(uint64_t id) { uint8_t *tlr = dm_tsd_get(g_keytlr); if (tlr) *(uint32_t *)(tlr + 0x110) = (uint32_t)id; }
 // The stack region the SDK reads from the current-thread object: nn::os::detail::DebugImplByHorizon::GetCurrentStackInfo takes base/size at object+0x50/+0x58 (or through the
 // object+0x70 pointer, which stays 0 here) and aborts when the current sp is in no registered region. On Horizon the kernel fills those fields; the host's stand-in object starts
 // zeroed, so the main thread's region must be written here (a guest thread's SDK CreateThread overwrites TLR[0x1f8] with its own ThreadType, whose fields the SDK fills itself).
 void guest_thread_set_stack(uint64_t base, uint64_t size) {
     uint8_t *tlr = dm_tsd_get(g_keytlr);
+    if (!tlr) return;
     uint8_t *obj = tlr + TLR_SIZE;
     if (*(void **)(tlr + 0x1f8) != obj) return;   // the SDK already put its own ThreadType there
     *(uint64_t *)(obj + 0x50) = base;

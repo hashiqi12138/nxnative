@@ -44,11 +44,7 @@
 #include <mach-o/getsect.h>
 #include <mach-o/ldsyms.h>
 
-#if defined(__APPLE__)
-extern void vk_pool_set_flags(const void *, int) __attribute__((weak_import));
-#else
-extern void vk_pool_set_flags(const void *, int) __attribute__((weak));
-#endif
+extern void vk_pool_set_flags(const void *, int);
 
 // ---------- Slot table, thunks, unimplemented stubs ----------
 typedef struct { _Atomic uint64_t cnt; void *fn; } nvn_slot_t;
