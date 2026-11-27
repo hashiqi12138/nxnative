@@ -1,6 +1,19 @@
 --- a/gfx/nvn/hle_nvn.c
 +++ b/gfx/nvn/hle_nvn.c
-@@ -140,6 +140,7 @@
+@@ -44,6 +44,12 @@
+ #include <mach-o/getsect.h>
+ #include <mach-o/ldsyms.h>
+ 
++#if defined(__APPLE__)
++extern void vk_pool_set_flags(const void *, int) __attribute__((weak_import));
++#else
++extern void vk_pool_set_flags(const void *, int) __attribute__((weak));
++#endif
++
+ // ---------- Slot table, thunks, unimplemented stubs ----------
+ typedef struct { _Atomic uint64_t cnt; void *fn; } nvn_slot_t;
+ nvn_slot_t nvn_slot[NVN_NFUNC];                 // The thunk accesses it by i*16; the layout must not change
+@@ -140,6 +146,7 @@
      o->origin = NVN_WINDOW_ORIGIN_MODE_LOWER_LEFT; mtl_set_origin_lower_left(1);   // NVN's default; every game so far switched to upper-left right away, Link's Awakening keeps it
      mtl_set_depth_zero(0);   // NVN's default depth mode: near = -w (GL)
      OLOG("DeviceInitialize %p flags=%#x", (void *)d, o->flags);
@@ -8,7 +21,7 @@
      return 1;
  }
  NVN(nvnDeviceFinalize, void, NVNdevice *d) { ((dev_t_ *)d)->magic = 0; }
-@@ -204,9 +205,11 @@
+@@ -204,9 +211,11 @@
  __attribute__((weak)) int dm_sdk_nvn2_item(unsigned item, int *out) { (void)item; (void)out; return 0; }
  __attribute__((weak)) int dm_glslc_gpu_code(int *major, int *minor) { *major = *minor = 0; return 0; }   // hle_glslc.c: the game's own GLSLC's GPU code version
  static void nvn_api(int api[2]) {
@@ -23,7 +36,7 @@
      // The Switch 2's NVN2 is API 231, and its minor moves with the SDK: the game's sdk holds the answer of its own driver (dm_sdk_nvn2_item). Games require it and create their graphics system
      // only then: Donkey Kong Bananza (SDK 20.5.19) major == 231 and minor >= 30 (main+0x5c61a4), Splatoon Raiders (SDK 21.4.4) minor >= 39 (main+0x31b86b0)
      int m = dm_sdk_major();
-@@ -214,7 +217,7 @@
+@@ -214,7 +223,7 @@
      else if (DM_SDK_OLD(m)) { api[0] = 53; int minor = dm_sdk_nvn1_minor(); api[1] = minor >= 0 ? minor : 313; }
      else { api[0] = g_devinfo[0]; api[1] = g_devinfo[1]; }
      LOG("[nvn] device API %d.%d (SDK %d%s)", api[0], api[1], m, dm_sdk_ounce() ? ", Switch 2" : "");
@@ -32,7 +45,7 @@
  }
  NVN(nvnDeviceGetInteger, void, const NVNdevice *d, NVNdeviceInfo what, int *out) {
      (void)d;
-@@ -324,6 +327,19 @@
+@@ -324,6 +333,14 @@
      }
      if (!o->mem && (o->flags & 0x200)) { uint8_t *vr = vpool_reserve(o); if (vr) o->mem = vr; }   // a virtual pool's own address range until its first mapping decides (see MapVirtual)
      else if (o->mem) { mtl_pool_add(o->mem, o->size); nvn_dirty_add_range(o->mem, o->size); }
@@ -43,16 +56,11 @@
 +    // memcpy'd back whole after every submission: 350 ms a frame, 3 fps (measured 2026-11-16). Weak: the Metal backend
 +    // (nvn_mtl.m) defines nothing - its buffers share the memory, no copy-back exists - so the call is skipped there.
 +    if (o->mem) {
-+#if defined(__APPLE__)
-+        extern void vk_pool_set_flags(const void *, int) __attribute__((weak_import));
-+#else
-+        extern void vk_pool_set_flags(const void *, int) __attribute__((weak));
-+#endif
 +        if (vk_pool_set_flags) vk_pool_set_flags(o->mem, o->flags); }
      if (o->mem && !(o->flags & 0x200)) dm_device_share(share_mem, o->size, 1);   // the GPU maps the storage: the host refuses to unmap it until Finalize, as Horizon does (hle_svc.c)
      if (!o->mem && !(o->flags & 0x200)) LOG("[RED] MemoryPoolInitialize: non-virtual pool has no storage flags=%#x size=%#llx", o->flags, o->size);
      if (getenv("DM_NVN_VLOG")) { LOG("[nvn] MemoryPool %p mem=%p size=%#llx flags=%#x", (void *)p, (void *)o->mem, (unsigned long long)o->size, o->flags); void dm_backtrace(uint64_t fp); dm_backtrace((uint64_t)__builtin_frame_address(0)); }
-@@ -867,7 +883,9 @@
+@@ -867,7 +884,9 @@
  
  // ---------- Programs ----------
  NVN(nvnProgramInitialize, NVNboolean, NVNprogram *p, NVNdevice *d) {
@@ -63,7 +71,7 @@
  }
  NVN(nvnProgramFinalize, void, NVNprogram *p) {
      pthread_mutex_lock(&g_sub_mu); mtl_prog_forget((const prog_t *)p); mtl_prog_release((prog_t *)p); pthread_mutex_unlock(&g_sub_mu);
-@@ -1100,7 +1118,9 @@
+@@ -1100,7 +1119,9 @@
      // not rewrite that queue state (Xenoblade 2 creates its queue first).
      *(queue_t *)q = (queue_t){MAGIC('Q', 'U', 'E', 'U'), d, 0,
                              !d || ((const dev_t_ *)d)->origin == NVN_WINDOW_ORIGIN_MODE_LOWER_LEFT, nvn_new_serial()};
@@ -74,7 +82,7 @@
  }
  NVN(nvnQueueFinalize, void, NVNqueue *q) {
      nvn_queue_forget((queue_t *)q);
-@@ -1653,6 +1673,8 @@
+@@ -1653,6 +1674,8 @@
  }
  NVN(nvnCommandBufferSetDepthRange, void, NVNcommandBuffer *c, float n, float f) { *REC(c, OP_DEPTH_RANGE, p_depth_range) = (p_depth_range){n, f}; }
  NVN(nvnCommandBufferBindProgram, void, NVNcommandBuffer *c, const NVNprogram *p, int stages) {
@@ -83,7 +91,7 @@
      *REC(c, OP_BIND_PROGRAM, p_bind_program) = (p_bind_program){(const prog_t *)p, stages};
  }
  static void bind_state(NVNcommandBuffer *c, int kind, const void *st, size_t n) {
-@@ -4326,6 +4348,7 @@
+@@ -4326,6 +4349,7 @@
  // The host identifies stages by the control section and does not use the extension field: convert to plain NVNshaderData and hand it to SetShaders.
  typedef struct { NVNbufferAddress data; const void *control; uint64_t ext; } shader_data_ext;
  NVN_NOPROTO(nvnProgramSetShadersExt, NVNboolean, NVNprogram *p, int n, const shader_data_ext *sd) {
