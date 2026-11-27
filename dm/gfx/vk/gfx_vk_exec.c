@@ -94,6 +94,8 @@ uint64_t vk_replay_ns(void) { return g_vkst.ns_exec; }   // the replay time so f
 static int g_fdz;  // DM_VK_FDZ（实时）：Adreno 深度剔除规避默认仅对 Qualcomm 开启，显式环境变量优先（pipeline key fdz）
 static int g_x_nosetc, g_x_nodrvc, g_x_landcut, g_x_nokeep, g_x_nocd, g_x_nobc, g_x_cutany, g_lrz_touch, g_xfb_on = 1, g_x_nogs, g_spv_alt, g_x_noclipmap; int g_x_noshc;   // g_xfb_on: DM_VK_XFB=0 captures no transform feedback (A/B)
 static int g_x_nosetmemo, g_x_setverify;   // DM_VK_X_NOSETMEMO=1 (live, A/B): no per-stage set memo; DM_VK_X_SETVERIFY=1 (live): one memo hit in 64 checked (see stage_set)
+static int g_memo_prof;   // DM_VK_MEMO_PROF: report descriptor memo counters every 300 submissions
+static void memo_prof_report(void);
 static int g_x_batchw = 1;   // DM_VK_X_BATCHW=0 (live, A/B): write a new set's descriptors one vkUpdateDescriptorSets per descriptor (the old Maleoon workaround); default one call for the whole set
 static int g_x_rtdup;   // DM_VK_RT_DUP (live): 1 changes dynamic stores only; 2 removes exact duplicate views in traditional render passes
 static int g_x_rtalias;   // DM_VK_RT_ALIAS (live, default 1): aliased colour slots store through a scratch image copied back after the pass
@@ -174,7 +176,7 @@ static void x_read(void) { const char *c = getenv("DM_VK_CB_DRAWS"); g_x_cbdraws
     g_x_nokeep = (e = getenv("DM_VK_X_NOKEEP")) && atoi(e); g_x_nocd = (e = getenv("DM_VK_X_NOCD")) && atoi(e); g_x_nobc = (e = getenv("DM_VK_X_NOBC")) && atoi(e); g_x_noshc = (e = getenv("DM_VK_X_NOSHC")) && atoi(e); g_x_cutany = (e = getenv("DM_VK_X_CUTANY")) && atoi(e); g_x_nogs = (e = getenv("DM_VK_X_NOGS")) && atoi(e); g_spv_alt = (e = getenv("DM_VK_SPV_ALT")) && atoi(e); g_x_noclipmap = (e = getenv("DM_VK_X_NOCLIPMAP")) && atoi(e); g_rd_touch = !((e = getenv("DM_VK_RD_TOUCH")) && !atoi(e));
     g_lrz_touch = !((e = getenv("DM_VK_LRZ_TOUCH")) && !atoi(e)); g_fdz = (e = getenv("DM_VK_FDZ")) ? (atoi(e) == 2 ? 2 : !!atoi(e)) : V.props.vendorID == 0x5143u; g_xfb_on = !((e = getenv("DM_VK_XFB")) && !atoi(e));
     g_psplit = (e = getenv("DM_VK_PASS_SPLIT")) ? atoi(e) : 0; g_setsplit = (e = getenv("DM_VK_SETSPLIT")) && atoi(e); g_psplit_depth = (e = getenv("DM_VK_PASS_SPLIT_DEPTH")) && atoi(e);
-    g_x_rdkeep = (e = getenv("DM_VK_X_RDKEEP")) && atoi(e); g_vbound = !((e = getenv("DM_VK_VBOUND")) && !atoi(e)); g_x_logfs = (e = getenv("DM_VK_LOG_FS")) ? strtoull(e, NULL, 16) : 0; g_samp_snap = !((e = getenv("DM_NVN_SAMP_SNAP")) && !atoi(e)); g_lin_back = !((e = getenv("DM_VK_LIN_BACK")) && !atoi(e)); g_async_pipe = !((e = getenv("DM_VK_ASYNC_PIPE")) && !atoi(e)); g_prof_on = (e = getenv("DM_VK_PROF_SLOW")) && atoi(e); { extern volatile int g_vk_samp_log; if ((e = getenv("DM_VK_SAMP_LOG")) && atoi(e) > 0) { g_vk_samp_log = atoi(e); setenv("DM_VK_SAMP_LOG", "0", 1); } } g_x_nosetmemo = (e = getenv("DM_VK_X_NOSETMEMO")) && atoi(e); g_x_setverify = (e = getenv("DM_VK_X_SETVERIFY")) && atoi(e);
+    g_x_rdkeep = (e = getenv("DM_VK_X_RDKEEP")) && atoi(e); g_vbound = !((e = getenv("DM_VK_VBOUND")) && !atoi(e)); g_x_logfs = (e = getenv("DM_VK_LOG_FS")) ? strtoull(e, NULL, 16) : 0; g_samp_snap = !((e = getenv("DM_NVN_SAMP_SNAP")) && !atoi(e)); g_lin_back = !((e = getenv("DM_VK_LIN_BACK")) && !atoi(e)); g_async_pipe = !((e = getenv("DM_VK_ASYNC_PIPE")) && !atoi(e)); g_prof_on = (e = getenv("DM_VK_PROF_SLOW")) && atoi(e); { extern volatile int g_vk_samp_log; if ((e = getenv("DM_VK_SAMP_LOG")) && atoi(e) > 0) { g_vk_samp_log = atoi(e); setenv("DM_VK_SAMP_LOG", "0", 1); } } g_x_nosetmemo = (e = getenv("DM_VK_X_NOSETMEMO")) && atoi(e); g_x_setverify = (e = getenv("DM_VK_X_SETVERIFY")) && atoi(e); g_memo_prof = (e = getenv("DM_VK_MEMO_PROF")) && atoi(e);
     g_x_rtdup = (e = getenv("DM_VK_RT_DUP")) ? atoi(e) : (V.props.vendorID == 0x19e5u ? 8 : 0);
     g_x_rtalias = (e = getenv("DM_VK_RT_ALIAS")) ? atoi(e) : 1;
     g_x_rtaliasfmt = (e = getenv("DM_VK_RT_ALIAS_FMT")) ? atoi(e) : 0;
@@ -216,6 +218,7 @@ void vk_exec_reset(void) {   // a new submission: NVN state does not carry over 
     static int inited; if (!inited) { inited = 1; state_reset(); crash_add_note_hook(build_dump); prewarm_start(); compute_warm_start(); }
     g_rc_npend = 0; g_rc_skip = 0;
     S.pass_open = 0; S.bound_pipe = VK_NULL_HANDLE; g_cb_draws = 0; g_ord_parts = 0; g_psplit_now = 0; P_sp_capture = 0; P_sp_owe = 0; P_nsp = 0; g_set_epoch++; x_read();
+    if (g_memo_prof) { static unsigned submissions; if (++submissions % 300 == 0) memo_prof_report(); }
     if (g_prof_on) { extern uint64_t g_pkg_ns, g_pkg_n; memset(g_prof_ns, 0, sizeof g_prof_ns); g_prof_t0 = tick(); g_prof_pkg0 = g_pkg_ns; g_prof_npkg0 = g_pkg_n; g_prof_pipes0 = g_vkst.pipes_built; }
     { extern volatile int g_vk_samp_log; if (g_vk_samp_log > 0) VKLOG("submission begins (present %llu, thread %d)", (unsigned long long)g_tex_frame, (int)gettid()); }
 }
@@ -1373,7 +1376,7 @@ static void cbuf_desc(int st, const vkshader_t *s, const dmsv_bind *b, VkDescrip
 // The set a stage's last draw got, and what it was built from. Between two draws most stages change no texture, sampler, image or storage buffer, only
 // the offsets of their constant buffers, which go to the bind (dynamic uniform buffers). Then nothing is collected or hashed: the constant buffers alone are
 // looked at again, and their buffer and range must be the same (the offset too for one that is not dynamic). It holds within one submission (the sets and
-// the driver segments' copies are its own) while the stage's shader and bindings (g_bind_gen, g_ubo_gen; only real changes count), the texture IDs (g_tex_gen),
+// the driver segments' copies are its own) while the stage's shader, its relevant texture/image/storage-buffer handles and constant-buffer generations, the texture IDs (g_tex_gen),
 // sampler IDs (g_samp_gen), memory pools (vk_pool_gen) and the base instance (the driver segment's c0 + 0x644) are unchanged. Images keep the last_use the
 // first build gave them: the fence it names is the same for the whole submission. Not for compute (its driver segment holds the dispatch size and its storage
 // buffers are marked written), nor for a shader that reads handles or addresses from uniform buffer memory (that memory changes under the same bindings).
@@ -1388,6 +1391,18 @@ typedef struct { vkshader_t *s; uint64_t epoch, bind, ubo, ubd, tex, samp, h, um
 // of a 38 ms frame.
 enum { MEMO_WAYS = 8 };
 static set_memo_t g_smemo[3][MEMO_WAYS]; static uint8_t g_smemo_tick[3];   // tick: LRU clock, a way is picked by (tick + i) % WAYS
+static struct { uint64_t lookups, hits, misses, probes, refills, bind_same, bind_diff, cbmiss; } g_memo_count[3];
+static void memo_prof_report(void) {
+    for (int st = 0; st < 3; st++) {
+        const __typeof__(g_memo_count[0]) *c = &g_memo_count[st];
+        VKLOG("memo stage %d: lookups %llu, hits %llu, probes %llu, misses %llu, cbmiss %llu; refills %llu, bind same %llu, bind diff %llu",
+              st, (unsigned long long)c->lookups, (unsigned long long)c->hits,
+              (unsigned long long)c->probes, (unsigned long long)c->misses,
+              (unsigned long long)c->cbmiss, (unsigned long long)c->refills,
+              (unsigned long long)c->bind_same, (unsigned long long)c->bind_diff);
+        memset(&g_memo_count[st], 0, sizeof g_memo_count[st]);
+    }
+}
 static uint64_t g_bind_gen[6], g_ubo_gen[6];   // a stage's handles or storage buffers changed (bind_handles_rec, OP_BIND_SSBO), its uniform buffers (OP_BIND_UBO)
 uint64_t g_set_memo, g_set_memo_bad;   // memo hits, and differences the verify mode found
 extern uint64_t g_ubd_gen; uint32_t vk_pool_gen(void);
@@ -1395,24 +1410,69 @@ static int set_memo_ok(vkshader_t *s) {
     if (!s->setmemo) { int ok = 1, ncb = 0;
         for (int i = 0; i < s->nbind; i++) { const dmsv_bind *b = &s->b[i]; ncb += b->kind == RK_CBUF;
             ok &= b->kind != RK_SBUF_UBO && b->kind != RK_UBO_PTR && b->kind != RK_TEX_UBO && b->kind != RK_IMG_UBO && b->kind != RK_TBUF_UBO && b->samp != RS_UBO && i < 256; }
-        s->setmemo = ok && ncb <= MEMO_CB ? 1 : 2; }
+        s->setmemo = ok && ncb <= MEMO_CB ? 1 : 2; s->memo_bind_gen = ~0ull; }
     return s->setmemo == 1;
 }
+static uint64_t memo_bind_hash(int st, vkshader_t *s) {
+    uint64_t gen = g_bind_gen[st];
+    if (s->memo_bind_gen != gen) {
+        uint64_t h = 0xcbf29ce484222325ull;
+        for (int i = 0; i < s->nbind; i++) {
+            const dmsv_bind *b = &s->b[i];
+            h = (h ^ b->kind) * 1099511628211ull;
+            h = (h ^ (uint16_t)b->reg) * 1099511628211ull;
+            switch (b->samp) {
+            case RS_TEX:
+                h = (h ^ (b->reg >= 0 && b->reg < 256 ? S.tex_sseq[st][b->reg] : 0)) * 1099511628211ull;
+                break;
+            case RS_SLOT:
+                h = (h ^ (b->samp_arg >= 0 && b->samp_arg < 128 ? S.samp[st][b->samp_arg] : 0)) * 1099511628211ull;
+                h = (h ^ (b->samp_arg >= 0 && b->samp_arg < 128 ? S.samp_sseq[st][b->samp_arg] : 0)) * 1099511628211ull;
+                break;
+            default: break;
+            }
+            switch (b->kind) {
+            case RK_TEX: case RK_TBUF:
+                h = (h ^ (b->reg >= 0 && b->reg < 256 ? S.tex[st][b->reg] : 0)) * 1099511628211ull;
+                h = (h ^ (b->reg >= 0 && b->reg < 256 ? S.tex_sseq[st][b->reg] : 0)) * 1099511628211ull;
+                break;
+            case RK_IMG: case RK_IMG_TBUF:
+                h = (h ^ (b->reg >= 0 && b->reg < 32 ? S.img[st][b->reg] : 0)) * 1099511628211ull;
+                break;
+            case RK_SBUF: {
+                const p_bind_buf *u = b->reg >= 0 && b->reg < 16 ? &S.ssbo[st][b->reg] : NULL;
+                h = (h ^ (u ? u->addr : 0)) * 1099511628211ull;
+                h = (h ^ (u ? u->size : 0)) * 1099511628211ull;
+                break; }
+            default: break;
+            }
+        }
+        s->memo_bind_gen = gen; s->memo_bind_hash = h;
+    }
+    return s->memo_bind_hash;
+}
 static set_memo_t *set_memo_get(int st, vkshader_t *s, uint32_t *dofs) {
+    if (g_memo_prof) g_memo_count[st].lookups++;
+    uint64_t bind = memo_bind_hash(st, s);
     set_memo_t *best = NULL;
     for (int i = 0; i < MEMO_WAYS; i++) { set_memo_t *m = &g_smemo[st][i];
-        if (m->s != s || m->epoch != g_set_epoch || m->bind != g_bind_gen[st] || m->tex != g_tex_gen || m->samp != __atomic_load_n(&g_samp_gen, __ATOMIC_ACQUIRE) || m->pool != vk_pool_gen() || m->binst != g_draw_binst) continue;
+        if (g_memo_prof) g_memo_count[st].probes++;
+        if (m->s != s || m->epoch != g_set_epoch) continue;
+        if (m->bind == bind) { if (g_memo_prof) g_memo_count[st].bind_same++; }
+        else { if (g_memo_prof) g_memo_count[st].bind_diff++; continue; }
+        if (m->tex != g_tex_gen || m->samp != __atomic_load_n(&g_samp_gen, __ATOMIC_ACQUIRE) || m->pool != vk_pool_gen() || m->binst != g_draw_binst) continue;
         best = m;   // keep the last matching way (the freshest of them is not tracked; a match is a match)
         if (m->ubo == g_ubo_gen[st] && m->ubd == g_ubd_gen) break;   // the constant buffers are the same too: nothing to recheck
     }
-    if (!best) return NULL;
+    if (!best) { if (g_memo_prof) g_memo_count[st].misses++; return NULL; }
     set_memo_t *m = best;
     if (m->ubo != g_ubo_gen[st] || m->ubd != g_ubd_gen) {   // the constant buffers again: most draws move only their offsets
         for (int c = 0; c < m->ncb; c++) { VkDescriptorBufferInfo d; cbuf_desc(st, s, &s->b[m->ci[c]], &d);
-            if (d.buffer != m->cd[c].buffer || d.range != m->cd[c].range || (m->cpos[c] == 0xff && d.offset != m->cd[c].offset)) return NULL;
+            if (d.buffer != m->cd[c].buffer || d.range != m->cd[c].range || (m->cpos[c] == 0xff && d.offset != m->cd[c].offset)) { if (g_memo_prof) g_memo_count[st].cbmiss++; return NULL; }
             if (m->cpos[c] != 0xff) m->dofs[m->cpos[c]] = (uint32_t)d.offset; }
         m->ubo = g_ubo_gen[st]; m->ubd = g_ubd_gen; }
     memcpy(dofs, m->dofs, sizeof *dofs * (size_t)s->ndyn); g_num_um = m->um; g_num_im = m->im;
+    if (g_memo_prof) g_memo_count[st].hits++;
     return m;
 }
     // dofs (at least s->ndyn entries): the dynamic offsets of the set's dynamic uniform buffers, in binding order as vkCmdBindDescriptorSets takes them
@@ -1523,14 +1583,19 @@ static VkDescriptorSet stage_set(int st, vkshader_t *s, uint32_t *dofs) {
         if (n++ < 20) VKLOG("[RED] descriptor set memo: stage %d shader %016llx: a fresh set differs from the memo's (hash %016llx / %016llx, um %#llx / %#llx, im %#llx / %#llx, dynamic offsets %s)", st, (unsigned long long)s->key,
                             (unsigned long long)h, (unsigned long long)hit->h, (unsigned long long)g_num_um, (unsigned long long)vum, (unsigned long long)g_num_im, (unsigned long long)vim, memcmp(vd, dofs, sizeof *dofs * (size_t)s->ndyn) ? "differ" : "same"); }
     if (memo) {
+        if (g_memo_prof) g_memo_count[st].refills++;
         // The way to fill: the one this shader last used (its bindings may differ only in the constant buffers' offsets,
         // which the memo's dofs path handles), else the round-robin slot. A hit's way is reused so a shader keeps its own
         // slot while other shaders take the others; a miss walks the tick, so eight shaders alternating on one stage each
         // keep their sets instead of evicting one another.
         set_memo_t *m = NULL;
-        for (int i = 0; i < MEMO_WAYS; i++) if (g_smemo[st][i].s == s && g_smemo[st][i].epoch == g_set_epoch) { m = &g_smemo[st][i]; break; }
+        for (int i = 0; i < MEMO_WAYS; i++) {
+            set_memo_t *v = &g_smemo[st][i];
+            if (v->s != s || v->epoch != g_set_epoch) continue;
+            if (!m || v->bind != s->memo_bind_hash) m = v;
+        }
         if (!m) { m = &g_smemo[st][g_smemo_tick[st]++ % MEMO_WAYS]; }
-        m->s = s; m->epoch = g_set_epoch; m->bind = g_bind_gen[st]; m->ubo = g_ubo_gen[st]; m->ubd = g_ubd_gen; m->tex = gtex; m->samp = gsamp; m->pool = gpool; m->binst = g_draw_binst;
+        m->s = s; m->epoch = g_set_epoch; m->bind = s->memo_bind_hash; m->ubo = g_ubo_gen[st]; m->ubd = g_ubd_gen; m->tex = gtex; m->samp = gsamp; m->pool = gpool; m->binst = g_draw_binst;
         m->h = h; m->um = g_num_um; m->im = g_num_im; m->set = set; memcpy(m->dofs, dofs, sizeof *dofs * (size_t)s->ndyn); m->ncb = ncb; memcpy(m->ci, mci, (size_t)ncb); memcpy(m->cd, mcd, sizeof *mcd * (size_t)ncb);
         for (int c = 0; c < ncb; c++) { m->cpos[c] = 0xff; for (int j = 0; j < nd; j++) if (dp[j].i == mci[c]) m->cpos[c] = (uint8_t)j; } }
     return set;
