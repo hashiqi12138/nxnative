@@ -3,6 +3,9 @@
 //   regs[0..30], sp, pc, pstate in that same order and size, so on Android it is a view of uc_mcontext.regs (cpsr = the low half of pstate).
 // DM_UC_V(uc) / DM_UC_FPSR(uc) / DM_UC_FPCR(uc): the SIMD registers (Linux: the fpsimd record in __reserved).
 // DM_UC_ESR(uc): the fault's exception syndrome (Linux: the esr record in __reserved, 0 when the kernel gave none).
+#if defined(__APPLE__) && !defined(_XOPEN_SOURCE)
+#define _XOPEN_SOURCE 700
+#endif
 #pragma once
 #include <signal.h>
 #include <stdint.h>
