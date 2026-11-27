@@ -22,6 +22,11 @@ static inline CFTypeRef CFBundleGetValueForInfoDictionaryKey(CFBundleRef b, CFSt
 static inline unsigned long CFGetTypeID(CFTypeRef v) { (void)v; return 0; }
 static inline unsigned long CFStringGetTypeID(void) { return 0; }
 static inline int CFStringGetCString(CFStringRef s, char *buf, long n, unsigned long enc) { (void)s; (void)enc; if (n > 0) buf[0] = 0; return 0; }
+typedef const void *CFTimeZoneRef;
+static inline CFStringRef CFStringCreateWithCString(CFAllocatorRef a, const char *s, unsigned long enc) { (void)a; (void)enc; return (CFStringRef)s; }
+static inline CFTimeZoneRef CFTimeZoneCreateWithName(CFAllocatorRef a, CFStringRef name, int tryObjc) { (void)a; (void)tryObjc; return (CFTimeZoneRef)name; }
+static inline CFTimeZoneRef CFTimeZoneCopySystem(void) { return NULL; }
+static inline CFStringRef CFTimeZoneGetName(CFTimeZoneRef tz) { (void)tz; return NULL; }
 
 // Disk free space with purgeable capacity (hle_svc.c guest_file_free_important): no CFURL on OHOS, the URL is NULL so the caller falls back to f_bavail.
 typedef const void *CFURLRef, *CFNumberRef;

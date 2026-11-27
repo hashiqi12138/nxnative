@@ -34,6 +34,8 @@ uint64_t mtl_completed_fence(void) { return mtl_last_fence(); }
 int mtl_wait_acq(uint64_t fence, uint64_t timeout_ns) { return mtl_wait(fence, timeout_ns); }
 void mtl_arch_save(int wait_ms, int ending) { (void)wait_ms; (void)ending; }
 void mtl_set_queue_origin_lower_left(int on) { (void)on; }
+void mtl_wait_gl_event(void *event, uint64_t value) { (void)event; (void)value; }
+// The Vulkan backend has no Metal shared event. GL syncs are not produced on OHOS, so this entry point stays inert.
 // dm_gfx_suspend's drain worker (hle_nvn.c): wait for the GPU work already submitted, not for new work (the graphics
 // gate is closed). The Vulkan backend's last fence is the newest submission; mtl_wait releases when it completes.
 void mtl_suspend_drain(void) { mtl_wait(mtl_last_fence(), 3000000000ull); }
@@ -42,6 +44,9 @@ void mtl_suspend_drain(void) { mtl_wait(mtl_last_fence(), 3000000000ull); }
 void mtl_present_layer(uint32_t w, uint32_t h) { (void)w; (void)h; }
 void mtl_present_screen(uint32_t w, uint32_t h) { (void)w; (void)h; }
 uint64_t mtl_present_screen_wait(double period) { (void)period; return 0; }
+int mtl_present_screen_wait_timeout(double period, uint64_t timeout_ns, uint64_t *waited_ns) {
+    (void)period; (void)timeout_ns; if (waited_ns) *waited_ns = 0; return 1;
+}
 void mtl_present_wait_texture(uint64_t ticket, uint64_t copy) { (void)copy; mtl_present_wait(ticket); }
 void mtl_present_progress(uint64_t *queued, uint64_t *done) { if (queued) *queued = 0; if (done) *done = 0; }
 static _Atomic uint64_t g_rec_frame;
@@ -100,16 +105,25 @@ int mtl_sub_stream_on(void) { return 0; }
 void mtl_prog_snapshot_pin(prog_t *copy, const prog_t *source) { *copy = *source; }
 void mtl_prog_prefetch(const prog_t *p) { (void)p; }
 void mtl_prog_forget(const prog_t *p) { (void)p; }
+void mtl_dlss_forget(uint64_t serial) { (void)serial; }
+int mtl_tex_init_gl(tex_t *t, uint32_t name) { (void)t; (void)name; return 0; }
+int mtl_tex_movie_write(const tex_t *t, const void *src, int w, int h, size_t row) {
+    (void)t; (void)src; (void)w; (void)h; (void)row; return 0;
+}
+int mtl_tex_movie_active(const tex_t *t) { (void)t; return 0; }
+void mtl_tex_movie_drop(const tex_t *t) { (void)t; }
 
 // ---- lifecycle / stats hooks of the upstream Metal side (dm_gfx_quit_begin, the frame summary's geometry line, counter timestamps) ----
 // The OHOS backend has no prewarm and no submission timestamps; the geocomp stats are empty (the Vulkan replay's geometry path reports through its own logs)
 void mtl_warm_stop(void) { }   // dm_gfx_quit_begin: no pipeline prewarm to stop on OHOS
 void mtl_sub_ready(uint64_t guest_ns) { (void)guest_ns; }   // the submission's ready time: no counter-timestamp spans on OHOS
+int mtl_gpu_done(uint64_t frame, uint64_t *end) { (void)frame; if (end) *end = 0; return -1; }
 uint64_t mtl_geocomp_stats(char *out, size_t cap) { (void)out; (void)cap; return 0; }   // geometry compute-path stats: none on the Vulkan replay
 
 // ---- snapshots / probes / prebuild ----
 int mtl_snap_on(void) { return 0; }
 uint64_t mtl_snap_acquire_wait(void) { return 0; }
+int mtl_snap_acquire_wait_timeout(uint64_t timeout_ns, uint64_t *waited_ns) { (void)timeout_ns; if (waited_ns) *waited_ns = 0; return 1; }
 int mtl_probe_ramp_on(void) { return 0; }
 int mtl_pso_prebuild_tool(void) { return 0; }
 void mtl_ab_gpu(uint64_t f, double gpu_ms, double frame_ms) { (void)f; (void)gpu_ms; (void)frame_ms; }

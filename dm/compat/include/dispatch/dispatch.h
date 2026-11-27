@@ -1,4 +1,4 @@
-// Android port: the counting semaphores of libdispatch on POSIX semaphores. Queues, sources and blocks are not provided (the host's few uses are ported in place).
+// Android port: POSIX-backed semaphores, detached async calls, one-shot initialization and timer sources. Queues are dummy handles.
 #pragma once
 #include <semaphore.h>
 #include <stdint.h>
@@ -7,6 +7,7 @@
 #include <time.h>
 #include <pthread.h>
 #include <pthread/qos.h>
+#include <sched.h>
 typedef sem_t *dispatch_semaphore_t;
 typedef uint64_t dispatch_time_t;
 #define DISPATCH_TIME_NOW 0ull
@@ -41,4 +42,51 @@ static inline void *dispatch_async_th(void *p) { struct dispatch_async_args *a =
 static inline void dispatch_async_f(dispatch_queue_t q, void *ctx, dispatch_function_t fn) {
     (void)q; struct dispatch_async_args *a = malloc(sizeof *a); if (!a) { fn(ctx); return; } a->fn = fn; a->ctx = ctx;
     pthread_t t; if (!pthread_create(&t, NULL, dispatch_async_th, a)) pthread_detach(t); else { fn(ctx); free(a); }
+}
+typedef uintptr_t dispatch_once_t;
+static inline void dispatch_once_f(dispatch_once_t *once, void *ctx, dispatch_function_t block) {
+    uintptr_t expected = 0;
+    if (__atomic_compare_exchange_n(once, &expected, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        if (block) block(ctx);
+        __atomic_store_n(once, 2, __ATOMIC_RELEASE);
+        return;
+    }
+    while (__atomic_load_n(once, __ATOMIC_ACQUIRE) != 2) sched_yield();
+}
+#define DISPATCH_SOURCE_TYPE_TIMER 0
+typedef struct dispatch_source {
+    pthread_t thread;
+    dispatch_function_t fn;
+    void *ctx;
+    uint64_t start_ns, interval_ns;
+    int started;
+} *dispatch_source_t;
+static inline void dispatch_sleep_ns(uint64_t ns) {
+    struct timespec ts = {(time_t)(ns / NSEC_PER_SEC), (long)(ns % NSEC_PER_SEC)};
+    while (nanosleep(&ts, &ts) && errno == EINTR) ;
+}
+static inline void *dispatch_timer_th(void *p) {
+    dispatch_source_t s = p;
+    struct timespec now; clock_gettime(CLOCK_REALTIME, &now);
+    uint64_t now_ns = (uint64_t)now.tv_sec * NSEC_PER_SEC + (uint64_t)now.tv_nsec;
+    if (s->start_ns > now_ns) dispatch_sleep_ns(s->start_ns - now_ns);
+    for (;;) {
+        if (s->fn) s->fn(s->ctx);
+        if (!s->interval_ns) break;
+        dispatch_sleep_ns(s->interval_ns);
+    }
+    return NULL;
+}
+static inline dispatch_source_t dispatch_source_create(const char *type, uintptr_t handle, uintptr_t mask, dispatch_queue_t q) {
+    (void)type; (void)handle; (void)mask; (void)q;
+    return calloc(1, sizeof(struct dispatch_source));
+}
+static inline void dispatch_source_set_timer(dispatch_source_t s, dispatch_time_t start, uint64_t interval, uint64_t leeway) {
+    (void)leeway; s->start_ns = start; s->interval_ns = interval;
+}
+static inline void dispatch_source_set_event_handler_f(dispatch_source_t s, dispatch_function_t fn) { s->fn = fn; }
+static inline void dispatch_resume(dispatch_source_t s) {
+    if (__atomic_exchange_n(&s->started, 1, __ATOMIC_ACQ_REL)) return;
+    if (pthread_create(&s->thread, NULL, dispatch_timer_th, s)) __atomic_store_n(&s->started, 0, __ATOMIC_RELEASE);
+    else pthread_detach(s->thread);
 }

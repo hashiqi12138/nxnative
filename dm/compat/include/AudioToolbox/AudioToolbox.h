@@ -59,6 +59,7 @@ typedef struct { Float64 mMinimum, mMaximum; } AudioValueRange;
 #include <CoreFoundation/CoreFoundation.h>
 typedef struct { UInt32 mSelector, mScope, mElement; } AudioObjectPropertyAddress;
 typedef UInt32 AudioObjectID;
+typedef UInt32 AudioObjectPropertySelector;
 typedef OSStatus (*AudioObjectPropertyListenerProc)(AudioObjectID obj, UInt32 n, const AudioObjectPropertyAddress *pa, void *data);
 #define kAudioObjectSystemObject 1u
 #define kAudioHardwarePropertyDevices 0x64657623u        /* 'dev#' */
@@ -68,11 +69,16 @@ typedef OSStatus (*AudioObjectPropertyListenerProc)(AudioObjectID obj, UInt32 n,
 #define kAudioObjectPropertyScopeOutput 0x6F757470u      /* 'outp' */
 #define kAudioObjectPropertyElementMain 0u
 #define kAudioDevicePropertyStreamFormat 0x73666D74u     /* 'sfmt' */
+#define kAudioDevicePropertyPreferredChannelLayout 0x73726E64u /* 'srnd' */
+#define kAudioHardwareUnknownPropertyError (-1)
 // The six-channel input layout (hle_audio.c au_set_layout6). The OHOS unit mixes its own way; setting it is a hint that may be refused,
 // which the caller logs and continues from.
-typedef struct { UInt32 mChannelLayoutTag, mChannelBitmap, mNumberChannelDescriptions; } AudioChannelLayout;
+typedef struct { UInt32 mChannelLabel, mChannelFlags; Float32 mCoordinates[3]; } AudioChannelDescription;
+typedef struct { UInt32 mChannelLayoutTag, mChannelBitmap, mNumberChannelDescriptions; AudioChannelDescription mChannelDescriptions[1]; } AudioChannelLayout;
+#define kAudioChannelLayoutTag_UseChannelDescriptions 0
 #define kAudioChannelLayoutTag_MPEG_5_1_A 0x00650006u     /* (101 << 16) | 6, as Apple defines it */
 #define kAudioUnitProperty_AudioChannelLayout 19
+#define kAudioFormatProperty_ChannelMap 0x636D6170u       /* 'cmap' */
 static inline OSStatus AudioObjectGetPropertyDataSize(AudioObjectID o, const AudioObjectPropertyAddress *pa, UInt32 q, const void *qd, UInt32 *size) {
     (void)o; (void)pa; (void)q; (void)qd; (void)size; return -1;
 }
@@ -84,6 +90,12 @@ static inline OSStatus AudioObjectAddPropertyListener(AudioObjectID o, const Aud
 }
 static inline OSStatus AudioObjectRemovePropertyListener(AudioObjectID o, const AudioObjectPropertyAddress *pa, AudioObjectPropertyListenerProc proc, void *data) {
     (void)o; (void)pa; (void)proc; (void)data; return -1;
+}
+static inline OSStatus AudioFormatGetPropertyInfo(UInt32 property, UInt32 size, const void *in, UInt32 *out) {
+    (void)property; (void)size; (void)in; (void)out; return -1;
+}
+static inline OSStatus AudioFormatGetProperty(UInt32 property, UInt32 size, const void *in, UInt32 *out, void *data) {
+    (void)property; (void)size; (void)in; (void)out; (void)data; return -1;
 }
 
 typedef struct dm_audio_unit *AudioUnit, *AudioComponentInstance;

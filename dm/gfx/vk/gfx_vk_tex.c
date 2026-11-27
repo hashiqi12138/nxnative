@@ -498,7 +498,7 @@ static int packaged_tex(const tex_t *t) {
     return r;
 }
 void mtl_tex_init(const tex_t *t) { (void)t; }
-void mtl_tex_release(tex_t *t) { (void)t; }   // images belong to their storage key, dropped with the pool
+int mtl_tex_release(tex_t *t) { (void)t; return 0; }   // images belong to their storage key, dropped with the pool
 int mtl_tex_gpu_owned(uint64_t serial) { (void)serial; return 0; }
 
 // ---------------- views ----------------

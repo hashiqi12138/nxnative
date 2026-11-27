@@ -111,7 +111,7 @@ void mtl_set_origin_lower_left(int on) { (void)on; }
 
 // ---------------- resources ----------------
 void mtl_tex_init(const tex_t *t) { (void)t; }
-void mtl_tex_release(tex_t *t) { (void)t; }
+int mtl_tex_release(tex_t *t) { (void)t; return 0; }
 void mtl_tex_cpu_written(const tex_t *t) { (void)t; }
 void mtl_reg_tex(int tid, const tex_t *t, const view_t *v) { (void)tid; (void)t; (void)v; }
 void mtl_reg_samp(int sid, const samp_par *sp) { (void)sid; (void)sp; }

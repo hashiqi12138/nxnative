@@ -10,5 +10,8 @@ typedef struct { uint32_t period, computation, constraint; int preemptible; } th
 #define THREAD_STANDARD_POLICY 1
 typedef struct { int reserved; } thread_standard_policy_data_t;
 #define THREAD_STANDARD_POLICY_COUNT ((unsigned)(sizeof(thread_standard_policy_data_t) / sizeof(int)))
+#define THREAD_PRECEDENCE_POLICY 3
+typedef struct { int importance; } thread_precedence_policy_data_t;
+#define THREAD_PRECEDENCE_POLICY_COUNT ((unsigned)(sizeof(thread_precedence_policy_data_t) / sizeof(int)))
 int thread_policy_set(int thread, thread_policy_flavor_t flavor, thread_policy_t policy, unsigned count);
 int thread_policy_get(int thread, thread_policy_flavor_t flavor, thread_policy_t policy, unsigned *count, int *get_default);
